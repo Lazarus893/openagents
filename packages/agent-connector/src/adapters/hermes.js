@@ -21,6 +21,7 @@ const { execSync, spawn } = require('child_process');
 
 const BaseAdapter = require('./base');
 const { buildOpenclawSystemPrompt } = require('./workspace-prompt');
+const wsl = require('../wsl');
 
 const IS_WINDOWS = process.platform === 'win32';
 const SESSION_ID_RE = /session_id:\s*(\S+)/;
@@ -54,6 +55,8 @@ class HermesAdapter extends BaseAdapter {
     this._hermesBin = this._findHermesBinary();
     if (this._hermesBin) {
       this._log(`Using Hermes binary: ${this._hermesBin} (profile=${this.hermesProfile})`);
+    } else if (IS_WINDOWS) {
+      this._log('Warning: hermes CLI not found. Install in WSL2: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash');
     } else {
       this._log('Warning: hermes CLI not found. Install: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash');
     }
@@ -66,11 +69,10 @@ class HermesAdapter extends BaseAdapter {
   _findHermesBinary() {
     const home = os.homedir();
 
-    // Tier 1: PATH
+    // Tier 1: PATH (Windows host, then macOS/Linux)
     try {
       if (IS_WINDOWS) {
-        // Native Windows unsupported upstream — we try anyway for WSL cases
-        const r = execSync('where hermes 2>nul', { encoding: 'utf-8', timeout: 5000 });
+        const r = execSync('where hermes 2>nul', { encoding: 'utf-8', timeout: 5000, windowsHide: true });
         const found = r.split(/\r?\n/)[0].trim();
         if (found) return found;
       } else {
@@ -79,8 +81,17 @@ class HermesAdapter extends BaseAdapter {
       }
     } catch {}
 
-    // Tier 2: Common install locations (hermes installer uses ~/.local/bin)
-    const candidates = IS_WINDOWS ? [] : [
+    // Tier 2 (Windows): WSL bridge — hermes has no native Windows distribution.
+    // If the user installed hermes inside WSL, return a sentinel; _runHermes
+    // detects it and spawns through wsl.exe.
+    if (IS_WINDOWS) {
+      const wslPath = wsl.wslWhich('hermes');
+      if (wslPath) return wsl.makeSentinel('hermes');
+      return null;
+    }
+
+    // Tier 2 (macOS/Linux): common install locations
+    const candidates = [
       path.join(home, '.local', 'bin', 'hermes'),
       '/opt/homebrew/bin/hermes',
       '/usr/local/bin/hermes',
@@ -94,7 +105,11 @@ class HermesAdapter extends BaseAdapter {
 
   _resolveProfile(explicit, agentName) {
     if (explicit && explicit !== '' && explicit !== 'auto') return explicit;
-    // Match agent name to an existing ~/.hermes/profiles/<name> if present
+    // On Windows the user's hermes profiles live inside WSL, not under
+    // C:\Users\<u>\.hermes — and probing across the boundary on every
+    // adapter construction is too slow. Skip auto-detect; caller can set
+    // hermesProfile explicitly via env config.
+    if (IS_WINDOWS) return 'default';
     try {
       const profileDir = path.join(os.homedir(), '.hermes', 'profiles', agentName);
       if (fs.existsSync(profileDir)) return agentName;
@@ -231,7 +246,10 @@ class HermesAdapter extends BaseAdapter {
 
   _buildHermesCmd(prompt, resumeSessionId) {
     if (!this._hermesBin) {
-      throw new Error('hermes CLI not found. Install with: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash');
+      const hint = IS_WINDOWS
+        ? 'Install hermes inside WSL2: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash'
+        : 'Install with: curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash';
+      throw new Error(`hermes CLI not found. ${hint}`);
     }
     const args = [];
     if (this.hermesProfile && this.hermesProfile !== 'default') {
@@ -252,13 +270,29 @@ class HermesAdapter extends BaseAdapter {
   async _runHermes(prompt, channelName) {
     const resumeId = this._channelSessions[channelName];
     const args = this._buildHermesCmd(prompt, resumeId);
-    this._log(`Running hermes (profile=${this.hermesProfile}, channel=${channelName}, resume=${!!resumeId})`);
+    const viaWsl = wsl.isSentinel(this._hermesBin);
+    this._log(`Running hermes (profile=${this.hermesProfile}, channel=${channelName}, resume=${!!resumeId}${viaWsl ? ', via=wsl' : ''})`);
 
-    const env = { ...(this.agentEnv || process.env) };
-    const proc = spawn(this._hermesBin, args, {
+    let cmd;
+    let cmdArgs;
+    let env;
+    if (viaWsl) {
+      cmd = wsl.WSL_BINARY;
+      cmdArgs = wsl.wslArgs('hermes', args);
+      env = wsl.buildWslEnv(this.agentEnv || process.env);
+    } else {
+      cmd = this._hermesBin;
+      cmdArgs = args;
+      env = { ...(this.agentEnv || process.env) };
+    }
+
+    const proc = spawn(cmd, cmdArgs, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // wsl.exe child should not be in its own process group — we kill it via
+      // taskkill /T which walks the Win32 process tree.
       detached: !IS_WINDOWS,
+      windowsHide: IS_WINDOWS,
     });
     this._channelProcesses[channelName] = proc;
 
@@ -297,7 +331,19 @@ class HermesAdapter extends BaseAdapter {
     if (!proc || proc.exitCode !== null) return;
     try {
       if (IS_WINDOWS) {
-        try { execSync(`taskkill /F /T /PID ${proc.pid}`, { timeout: 5000 }); } catch {}
+        try { execSync(`taskkill /F /T /PID ${proc.pid}`, { timeout: 5000, windowsHide: true }); } catch {}
+        // When we spawned through wsl.exe, taskkill kills the Windows-side
+        // wsl.exe but the Linux-side hermes is sometimes left orphaned for
+        // a few seconds. Best-effort cleanup — silent on failure.
+        if (wsl.isSentinel(this._hermesBin)) {
+          try {
+            execSync(`${wsl.WSL_BINARY} -e pkill -TERM -f "^hermes( |$)"`, {
+              timeout: 5000,
+              stdio: 'ignore',
+              windowsHide: true,
+            });
+          } catch {}
+        }
       } else {
         try { process.kill(-proc.pid, 'SIGTERM'); } catch {
           proc.kill('SIGTERM');

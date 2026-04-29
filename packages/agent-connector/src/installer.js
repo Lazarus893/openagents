@@ -6,6 +6,7 @@ const path = require('path');
 const { execSync, exec } = require('child_process');
 const { whichBinary, getEnhancedEnv, getRuntimePrefix } = require('./paths');
 const { EnvManager } = require('./env');
+const wsl = require('./wsl');
 
 const STATUS_CACHE_TTL_MS = 10000;
 const statusCache = new Map();
@@ -82,6 +83,15 @@ class Installer {
     // Fallback: check if binary exists on PATH (system install)
     const binaryPath = this._whichBinary(agentType);
     if (!binaryPath) {
+      // WSL fallback (Windows only, opt-in via registry windows_strategy: wsl)
+      // For agents without a native Windows build, the user installs them
+      // inside WSL2 and we bridge through wsl.exe. See src/wsl.js.
+      if (process.platform === 'win32' && entry?.install?.windows_strategy === 'wsl') {
+        const wslPath = wsl.wslWhich(binary);
+        if (wslPath) {
+          return { installed: true, managed: false, location: 'wsl' };
+        }
+      }
       try { fs.unlinkSync(path.join(this.markersDir, agentType)); } catch {}
       return { installed: false, managed: false, location: null };
     }
@@ -135,7 +145,20 @@ class Installer {
    * @returns {{ installed: boolean, binary: string|null, version: string|null }}
    */
   healthCheck(agentType) {
-    const binary = this._whichBinary(agentType);
+    const entry = this.registry.getEntry(agentType);
+    const installBinary = entry && entry.install ? entry.install.binary : agentType;
+    let binary = this._whichBinary(agentType);
+    let isWsl = false;
+
+    // WSL fallback (Windows + opt-in)
+    if (!binary && process.platform === 'win32' && entry?.install?.windows_strategy === 'wsl') {
+      const wslPath = wsl.wslWhich(installBinary);
+      if (wslPath) {
+        binary = wsl.makeSentinel(installBinary);
+        isWsl = true;
+      }
+    }
+
     if (!binary) {
       return {
         installed: false,
@@ -148,9 +171,10 @@ class Installer {
       };
     }
 
-    const entry = this.registry.getEntry(agentType);
     const checkCmd = entry && entry.install ? entry.install.check_command : null;
-    const versionCmd = checkCmd || `${entry && entry.install && entry.install.binary || agentType} --version`;
+    const versionCmd = isWsl
+      ? `${wsl.WSL_BINARY} -e ${installBinary} --version`
+      : checkCmd || `${installBinary} --version`;
 
     let version = null;
     try {
@@ -159,6 +183,7 @@ class Installer {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: getEnhancedEnv(),
         timeout: 10000,
+        windowsHide: true,
       }).trim();
       // Extract version number (e.g. "openclaw 2024.1.5" → "2024.1.5")
       const match = raw.match(/(\d+[\d.]+\d+)/);

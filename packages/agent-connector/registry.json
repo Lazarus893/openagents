@@ -554,9 +554,10 @@
     "install": {
       "binary": "hermes",
       "requires": ["python3"],
+      "windows_strategy": "wsl",
       "macos": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
       "linux": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
-      "windows": "echo 'Hermes requires WSL2 on Windows — see https://github.com/NousResearch/hermes-agent'"
+      "windows": "wsl -e which hermes"
     },
     "launch": {
       "args": []

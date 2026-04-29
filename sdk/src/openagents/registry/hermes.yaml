@@ -8,13 +8,15 @@ builtin: true
 install:
   binary: hermes
   requires: [python3]
-  # Hermes ships a curl-pipe installer that handles platform-specific
-  # setup (pipx/uv/venv, PATH wiring, skill sync). There is no
-  # `hermes-agent` package on PyPI.
+  # Hermes has no native Windows distribution. The user installs it inside
+  # WSL2 themselves (see hermes-agent README); the launcher detects it via
+  # `wsl -e which hermes` and bridges all subprocess calls through wsl.exe.
+  # `windows_strategy: wsl` opts the installer / health check into the WSL
+  # fallback path implemented in installer.js + adapters/hermes.js.
+  windows_strategy: wsl
   macos: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
   linux: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-  # Native Windows is not supported by hermes-agent upstream — run under WSL2.
-  windows: "echo 'Hermes requires WSL2 on Windows. See https://github.com/NousResearch/hermes-agent'"
+  windows: "wsl -e which hermes"
 
 adapter:
   module: openagents.adapters.hermes
