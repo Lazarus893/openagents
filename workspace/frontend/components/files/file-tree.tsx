@@ -1,8 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, Folder, Loader2, FolderOpen } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { ChevronRight, Folder, Loader2, FolderOpen, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  isFileSystemAccessSupported,
+  pickDirectory,
+  buildTreeFromHandle,
+  registerHandle,
+  readFileFromHandle,
+  findHandleForPath,
+} from '@/lib/browser-fs';
+import { syncFilesToKnowledge } from '@/lib/knowledge-sync';
 
 export interface FileNode {
   name: string;
@@ -160,6 +169,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [browserMode, setBrowserMode] = useState(false);
 
   const fetchTree = useCallback(async () => {
     setLoading(true);
@@ -169,16 +179,137 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setTree(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load files');
+    } catch {
+      // Server API unavailable — switch to browser mode
+      setBrowserMode(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  const handlePickFolder = useCallback(async () => {
+    if (!isFileSystemAccessSupported()) {
+      setError('您的浏览器不支持文件夹选择功能');
+      return;
+    }
+
+    try {
+      const handle = await pickDirectory();
+      registerHandle(handle.name, handle);
+
+      setLoading(true);
+      const folderTree = await buildTreeFromHandle(handle);
+
+      setTree((prev) => {
+        if (!prev) {
+          return folderTree;
+        }
+        // Multiple folders — merge as sibling root nodes
+        if (prev.name === '__browser_root__') {
+          return {
+            ...prev,
+            children: [...(prev.children || []), folderTree],
+          };
+        }
+        // Wrap existing + new into a virtual root
+        return {
+          name: '__browser_root__',
+          path: '',
+          type: 'directory' as const,
+          children: [prev, folderTree],
+        };
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return; // User cancelled
+      }
+      setError('无法访问该文件夹，请检查权限设置');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleSelectFileInBrowserMode = useCallback(
+    async (filePath: string) => {
+      const rootHandle = findHandleForPath(filePath);
+      if (rootHandle) {
+        try {
+          const content = await readFileFromHandle(rootHandle, filePath);
+          window.dispatchEvent(
+            new CustomEvent('local-file-select', {
+              detail: { path: filePath, content },
+            })
+          );
+        } catch {
+          window.dispatchEvent(
+            new CustomEvent('local-file-select', {
+              detail: { path: filePath, content: null },
+            })
+          );
+        }
+      } else {
+        window.dispatchEvent(
+          new CustomEvent('local-file-select', {
+            detail: { path: filePath },
+          })
+        );
+      }
+    },
+    []
+  );
+
+  const handleFileSelect = useCallback(
+    (filePath: string) => {
+      if (browserMode) {
+        handleSelectFileInBrowserMode(filePath);
+      } else {
+        onSelectFile(filePath);
+      }
+    },
+    [browserMode, handleSelectFileInBrowserMode, onSelectFile]
+  );
+
   useEffect(() => {
     fetchTree();
   }, [fetchTree]);
+
+  // Knowledge sync: sync file changes to Knowledge entries
+  const syncedRef = useRef(false);
+  useEffect(() => {
+    if (!tree || tree.type !== 'directory') return;
+    if (syncedRef.current) return;
+    syncedRef.current = true;
+
+    const doSync = async () => {
+      try {
+        const result = await syncFilesToKnowledge(
+          tree,
+          async (path) => {
+            // Try browser FS handle first, fallback to server API
+            try {
+              const handle = findHandleForPath(path);
+              if (handle) {
+                return await readFileFromHandle(handle, path);
+              }
+            } catch {
+              // Fallback to server API
+            }
+            const res = await fetch(`/api/local-files?path=${encodeURIComponent(path)}&content=true`);
+            const data = await res.json();
+            return data.content || '';
+          },
+          'default'
+        );
+        if (result.created > 0 || result.updated > 0) {
+          window.dispatchEvent(new CustomEvent('knowledge-synced', { detail: result }));
+        }
+      } catch {
+        // Silent fail - sync is best-effort
+      }
+    };
+
+    doSync();
+  }, [tree]);
 
   // Filter tree nodes by search
   const filterTree = useCallback((node: FileNode, query: string): FileNode | null => {
@@ -211,7 +342,29 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
     );
   }
 
-  if (error) {
+  // Browser mode: no tree loaded yet — show empty state with folder picker
+  if (browserMode && !tree) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
+        <FolderOpen className="size-10 text-muted-foreground/40" />
+        <p className="text-sm text-muted-foreground">选择本地文件夹查看文件</p>
+        {!isFileSystemAccessSupported() ? (
+          <p className="text-xs text-muted-foreground/60 text-center px-4">
+            您的浏览器不支持文件夹选择功能，请使用 Chrome 或 Edge 浏览器
+          </p>
+        ) : (
+          <button
+            onClick={handlePickFolder}
+            className="px-4 py-2 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            选择文件夹
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (error && !browserMode) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
         <p className="text-sm">{error}</p>
@@ -219,7 +372,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
           onClick={fetchTree}
           className="text-xs text-primary hover:underline"
         >
-          Retry
+          重试
         </button>
       </div>
     );
@@ -227,14 +380,23 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Search */}
-      <div className="px-2 pb-2 shrink-0">
+      {/* Header with search and add folder button */}
+      <div className="px-2 pb-2 shrink-0 flex items-center gap-1.5">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter files..."
-          className="w-full text-xs px-2.5 py-1.5 rounded-md bg-muted/50 border border-input outline-none text-foreground placeholder:text-muted-foreground"
+          placeholder="筛选文件..."
+          className="flex-1 text-xs px-2.5 py-1.5 rounded-md bg-muted/50 border border-input outline-none text-foreground placeholder:text-muted-foreground"
         />
+        {browserMode && (
+          <button
+            onClick={handlePickFolder}
+            className="size-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-muted-foreground transition-colors shrink-0"
+            title="添加文件夹"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Tree */}
@@ -245,7 +407,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
               key={child.path}
               node={child}
               level={0}
-              onSelectFile={onSelectFile}
+              onSelectFile={handleFileSelect}
               selectedPath={selectedPath}
               searchQuery={search}
             />
@@ -254,7 +416,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <FolderOpen className="size-8 opacity-30 mb-2" />
             <p className="text-sm">
-              {search ? 'No files match your filter' : 'No files found'}
+              {search ? '没有匹配的文件' : '没有找到文件'}
             </p>
           </div>
         )}

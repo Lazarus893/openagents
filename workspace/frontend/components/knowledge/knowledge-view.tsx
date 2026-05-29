@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { BookOpen, Plus, RefreshCw, Pencil, Trash2, ArrowLeft, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { useWorkspace } from '@/lib/workspace-context';
 import { MarkdownContent } from '@/components/chat/markdown-content';
 import { useLayout } from '@/components/layout/layout-context';
@@ -90,6 +91,21 @@ export function KnowledgeView() {
   }, []);
 
   useEffect(() => { loadTree(); }, [loadTree]);
+
+  // Listen for knowledge-synced events from file tree
+  useEffect(() => {
+    const handleSync = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { created: number; updated: number; removed: number };
+      loadTree();
+      const parts: string[] = [];
+      if (detail.created > 0) parts.push(`新增 ${detail.created} 个`);
+      if (detail.updated > 0) parts.push(`更新 ${detail.updated} 个`);
+      if (detail.removed > 0) parts.push(`移除 ${detail.removed} 个`);
+      toast.success(`已同步文件到知识库：${parts.join('、')}`);
+    };
+    window.addEventListener('knowledge-synced', handleSync);
+    return () => window.removeEventListener('knowledge-synced', handleSync);
+  }, [loadTree]);
 
   // Select a node
   const handleSelect = useCallback(async (node: KnowledgeNode) => {
