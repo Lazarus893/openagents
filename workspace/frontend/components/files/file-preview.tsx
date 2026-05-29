@@ -75,15 +75,22 @@ function parseCsv(text: string): string[][] {
   });
 }
 
-/** Local file preview — displays content fetched from /api/local-files */
-function LocalFilePreview({ filePath, onBack }: { filePath: string; onBack: () => void }) {
-  const [content, setContent] = useState<string | null>(null);
+/** Local file preview — displays content fetched from /api/local-files or browser FS */
+function LocalFilePreview({ filePath, initialContent, onBack }: { filePath: string; initialContent?: string | null; onBack: () => void }) {
+  const [content, setContent] = useState<string | null>(initialContent ?? null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(initialContent === undefined);
 
   const filename = filePath.split('/').pop() || filePath;
 
   useEffect(() => {
+    // If we already have content from browser mode, skip fetching
+    if (initialContent !== undefined) {
+      setContent(initialContent);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setContent(null);
@@ -119,7 +126,7 @@ function LocalFilePreview({ filePath, onBack }: { filePath: string; onBack: () =
 
     fetchContent();
     return () => { cancelled = true; };
-  }, [filePath]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filePath, initialContent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup blob URLs
   useEffect(() => {
@@ -257,6 +264,7 @@ export function FilePreview() {
   const [localFilePath, setLocalFilePath] = useState<string | null>(null);
 
   const file = files.find((f) => f.id === selectedFileId);
+  const [localFileContent, setLocalFileContent] = useState<string | null | undefined>(undefined);
 
   // Listen for local file selection events from tree view
   useEffect(() => {
@@ -264,6 +272,8 @@ export function FilePreview() {
       const detail = (e as CustomEvent).detail;
       if (detail?.path) {
         setLocalFilePath(detail.path);
+        // If content is provided (browser mode), store it
+        setLocalFileContent(detail.content !== undefined ? detail.content : undefined);
         setSelectedFileId(null); // deselect workspace file
       }
     };
@@ -357,8 +367,10 @@ export function FilePreview() {
     return (
       <LocalFilePreview
         filePath={localFilePath}
+        initialContent={localFileContent}
         onBack={() => {
           setLocalFilePath(null);
+          setLocalFileContent(undefined);
           if (isMobile) openMobileList();
         }}
       />
