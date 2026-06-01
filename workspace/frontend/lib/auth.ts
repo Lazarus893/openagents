@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from './config';
 
 const STORAGE_KEYS = {
   accessToken: 'oa_access_token',

@@ -21,6 +21,7 @@ import {
 import { ListTree, UserPlus, MessageSquare, CalendarClock, Zap, Eye, Square, ChevronLeft, X, Plus, Globe, Share2 } from 'lucide-react';
 import { ShareDialog } from './share-dialog';
 import { useLayout } from '@/components/layout/layout-context';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { CreateRoutineDialog } from '@/components/routines/create-routine-dialog';
@@ -93,11 +94,36 @@ export function ChatView() {
     isMobile,
     openMobileList,
     viewMode,
+    setViewMode,
     splitBrowser,
     setSplitBrowser,
     showBrowserPreview,
     setShowBrowserPreview,
   } = useLayout();
+
+  // Action card → entity navigation: switch to the relevant panel and emit
+  // a CustomEvent so the destination view can highlight the requested item.
+  // Mirrors existing 'knowledge-synced' / 'files-loaded' patterns.
+  const handleOpenEntity = useCallback((entity: { type: string; id: string }) => {
+    if (entity.type === 'task') {
+      setViewMode('tasks');
+      window.dispatchEvent(new CustomEvent('open-task', { detail: { id: entity.id } }));
+    } else if (entity.type === 'review') {
+      setViewMode('tasks');
+      window.dispatchEvent(new CustomEvent('open-task', { detail: { id: entity.id } }));
+    } else if (entity.type === 'knowledge') {
+      setViewMode('knowledge');
+      window.dispatchEvent(new CustomEvent('open-knowledge', { detail: { id: entity.id } }));
+    } else if (entity.type === 'routine') {
+      setViewMode('routines');
+      window.dispatchEvent(new CustomEvent('open-routine', { detail: { id: entity.id } }));
+    } else if (entity.type === 'file') {
+      setViewMode('files');
+      window.dispatchEvent(new CustomEvent('open-file', { detail: { id: entity.id } }));
+    } else {
+      toast(`Open the ${entity.type} panel to see this`);
+    }
+  }, [setViewMode]);
 
   // Continuously refresh message caches for top recent sessions in the background.
   // This ensures clicking any recent thread shows messages instantly and up-to-date.
@@ -693,6 +719,7 @@ export function ChatView() {
             loadOlder={loadOlder}
             hasOlder={hasOlder}
             loadingOlder={loadingOlder}
+            onOpenEntity={handleOpenEntity}
             className="flex-1 overflow-y-auto px-3 lg:px-5 py-3"
           />
         )}

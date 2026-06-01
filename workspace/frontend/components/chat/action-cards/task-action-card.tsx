@@ -48,14 +48,15 @@ const STATUS_BADGE: Record<string, string> = {
 // Component
 // ---------------------------------------------------------------------------
 
-export function TaskActionCard({ metadata }: { metadata: TaskActionMetadata }) {
+export function TaskActionCard({ metadata, onOpen }: { metadata: TaskActionMetadata; onOpen?: (entity: { type: string; id: string }) => void }) {
   const { task, actionType } = metadata;
   const isCreated = actionType === 'task_created';
   const headerText = isCreated ? '任务已创建' : '任务已更新';
 
   return (
     <div
-      className={cn(
+      onClick={() => onOpen?.({ type: 'task', id: metadata.task.id })}
+      className={cn('cursor-pointer hover:bg-muted/50 transition-colors',
         'rounded-lg border bg-muted/30 border-l-4 max-w-sm p-3 space-y-1.5',
         PRIORITY_BORDER[task.priority] || 'border-l-zinc-400',
       )}

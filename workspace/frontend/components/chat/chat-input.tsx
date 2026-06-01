@@ -158,13 +158,18 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
 
   const handleTaskFormSubmit = async () => {
     if (!taskFormTitle.trim()) return;
+    if (!workspaceId) return;
+    const assigneeRaw = taskFormAssignee.trim();
+    const isAgent = assigneeRaw.startsWith('@') || agents.some((a) => a.agentName === assigneeRaw);
+    const assigneeType: 'human' | 'agent' = isAgent ? 'agent' : 'human';
+    const assignee = assigneeRaw.replace(/^@/, '') || null;
     const task = await createTask({
-      workspaceId: workspaceId || 'ws-1',
+      workspaceId,
       title: taskFormTitle.trim(),
       priority: taskFormPriority,
-      assignee: taskFormAssignee.trim() || null,
-      taskType: 'human',
-      assigneeType: taskFormAssignee.trim() ? 'human' : 'human',
+      assignee,
+      taskType: isAgent ? 'agent' : 'human',
+      assigneeType,
     });
     const metadata = {
       actionType: 'task_created',

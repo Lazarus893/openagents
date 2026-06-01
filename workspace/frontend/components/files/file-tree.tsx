@@ -12,6 +12,7 @@ import {
   findHandleForPath,
 } from '@/lib/browser-fs';
 import { syncFilesToKnowledge } from '@/lib/knowledge-sync';
+import { useWorkspace } from '@/lib/workspace-context';
 
 export interface FileNode {
   name: string;
@@ -165,6 +166,8 @@ interface FileTreeProps {
 }
 
 export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace?.workspaceId || 'default';
   const [tree, setTree] = useState<FileNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -298,7 +301,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
             const data = await res.json();
             return data.content || '';
           },
-          'default'
+          workspaceId
         );
         if (result.created > 0 || result.updated > 0) {
           window.dispatchEvent(new CustomEvent('knowledge-synced', { detail: result }));
@@ -309,7 +312,7 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
     };
 
     doSync();
-  }, [tree]);
+  }, [tree, workspaceId]);
 
   // Filter tree nodes by search
   const filterTree = useCallback((node: FileNode, query: string): FileNode | null => {

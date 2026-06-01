@@ -114,9 +114,10 @@ function Attachments({ items }: { items: Attachment[] }) {
 interface ChatMessageProps {
   message: WorkspaceMessage;
   agents?: WorkspaceAgent[];
+  onOpenEntity?: (entity: { type: string; id: string }) => void;
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, agents = [] }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, agents = [], onOpenEntity }: ChatMessageProps) {
   const { currentUser } = useWorkspace();
   const isHuman = message.senderType === 'human' || message.senderType === 'user';
   const isSystem = message.messageType === 'status';
@@ -184,7 +185,7 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [] }: C
             <div className="text-sm leading-relaxed mt-0.5">
               <MarkdownContent content={message.content} agentNames={agentNames} />
               <Attachments items={attachments} />
-              <ActionCardRenderer metadata={message.metadata} />
+              <ActionCardRenderer metadata={message.metadata} onOpen={onOpenEntity} />
             </div>
           </div>
         </div>
@@ -219,7 +220,7 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [] }: C
           <div className="text-sm leading-relaxed mt-0.5">
             <MarkdownContent content={message.content} agentNames={agentNames} />
             <Attachments items={attachments} />
-            <ActionCardRenderer metadata={message.metadata} />
+            <ActionCardRenderer metadata={message.metadata} onOpen={onOpenEntity} />
 
             {/* Copy button */}
             <div className="flex items-center gap-1 mt-1">

@@ -2,7 +2,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-ARG NEXT_PUBLIC_API_URL=https://workspace-endpoint.openagents.org
+ARG NEXT_PUBLIC_API_URL=https://backend-production-0a4a.up.railway.app
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # Install dependencies

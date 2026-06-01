@@ -176,6 +176,10 @@ function formatName(slug: string): string {
 }
 
 export async function GET() {
+  if (process.env.VERCEL) {
+    return NextResponse.json({ error: 'not available in serverless env' }, { status: 404 });
+  }
+
   try {
     const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
 

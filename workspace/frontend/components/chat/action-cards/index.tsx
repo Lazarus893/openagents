@@ -23,9 +23,10 @@ export type ActionMetadata =
 
 interface ActionCardRendererProps {
   metadata?: Record<string, unknown>;
+  onOpen?: (entity: { type: string; id: string }) => void;
 }
 
-export function ActionCardRenderer({ metadata }: ActionCardRendererProps) {
+export function ActionCardRenderer({ metadata, onOpen }: ActionCardRendererProps) {
   if (!metadata || !metadata.actionType) return null;
 
   const actionType = metadata.actionType as string;
@@ -33,15 +34,15 @@ export function ActionCardRenderer({ metadata }: ActionCardRendererProps) {
   switch (actionType) {
     case 'task_created':
     case 'task_updated':
-      return <TaskActionCard metadata={metadata as unknown as TaskActionMetadata} />;
+      return <TaskActionCard metadata={metadata as unknown as TaskActionMetadata} onOpen={onOpen} />;
     case 'knowledge_added':
-      return <KnowledgeActionCard metadata={metadata as unknown as KnowledgeActionMetadata} />;
+      return <KnowledgeActionCard metadata={metadata as unknown as KnowledgeActionMetadata} onOpen={onOpen} />;
     case 'routine_created':
-      return <RoutineActionCard metadata={metadata as unknown as RoutineActionMetadata} />;
+      return <RoutineActionCard metadata={metadata as unknown as RoutineActionMetadata} onOpen={onOpen} />;
     case 'file_shared':
-      return <FileActionCard metadata={metadata as unknown as FileActionMetadata} />;
+      return <FileActionCard metadata={metadata as unknown as FileActionMetadata} onOpen={onOpen} />;
     case 'review_requested':
-      return <ReviewActionCard metadata={metadata as unknown as ReviewActionMetadata} />;
+      return <ReviewActionCard metadata={metadata as unknown as ReviewActionMetadata} onOpen={onOpen} />;
     default:
       return null;
   }

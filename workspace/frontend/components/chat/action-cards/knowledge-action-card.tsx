@@ -21,14 +21,14 @@ export interface KnowledgeActionMetadata {
 // Component
 // ---------------------------------------------------------------------------
 
-export function KnowledgeActionCard({ metadata }: { metadata: KnowledgeActionMetadata }) {
+export function KnowledgeActionCard({ metadata, onOpen }: { metadata: KnowledgeActionMetadata; onOpen?: (entity: { type: string; id: string }) => void }) {
   const { knowledge } = metadata;
   const preview = knowledge.content.length > 100
     ? knowledge.content.slice(0, 100) + '…'
     : knowledge.content;
 
   return (
-    <div className="rounded-lg border bg-muted/30 border-l-4 border-l-amber-500 max-w-sm p-3 space-y-1.5">
+    <div onClick={() => onOpen?.({ type: 'knowledge', id: knowledge.id })} className="rounded-lg border bg-muted/30 border-l-4 border-l-amber-500 max-w-sm p-3 space-y-1.5 cursor-pointer hover:bg-muted/50 transition-colors">
       {/* Header */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <BookOpen className="size-3.5" />

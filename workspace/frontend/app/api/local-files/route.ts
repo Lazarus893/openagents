@@ -76,6 +76,10 @@ async function buildTree(dirPath: string, relativePath: string, depth: number): 
 }
 
 export async function GET(request: NextRequest) {
+  if (process.env.VERCEL) {
+    return NextResponse.json({ error: 'not available in serverless env' }, { status: 404 });
+  }
+
   const { searchParams } = new URL(request.url);
   const requestedPath = searchParams.get('path') || '';
   const content = searchParams.get('content') === 'true';

@@ -1,6 +1,5 @@
 import { getStoredAuth, refreshAccessToken } from './auth';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from './config';
 
 export interface WorkspaceSummary {
   workspaceId: string;

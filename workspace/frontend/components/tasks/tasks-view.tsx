@@ -7,6 +7,7 @@ import type { Task } from '@/lib/api-tasks';
 import { TaskFilters, type TaskFilterState } from './task-filters';
 import { ProjectSection, TaskCard } from './task-card';
 import { CreateTaskDialog, type CreateTaskData } from './create-task-dialog';
+import { useWorkspace } from '@/lib/workspace-context';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,6 +57,8 @@ function groupTasksByProject(tasks: Task[]): GroupedTasks[] {
 // ---------------------------------------------------------------------------
 
 export function TasksView() {
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace?.workspaceId;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -68,9 +71,14 @@ export function TasksView() {
 
   // Fetch tasks
   const loadTasks = useCallback(async () => {
+    if (!workspaceId) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const result = await fetchTasks('ws-1', {
+      const result = await fetchTasks(workspaceId, {
         projectId: filters.projectId || undefined,
         taskType: filters.taskType || undefined,
         status: filters.status || undefined,
@@ -82,7 +90,7 @@ export function TasksView() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, workspaceId]);
 
   useEffect(() => {
     loadTasks();
@@ -99,13 +107,14 @@ export function TasksView() {
 
   const handleCreateTask = useCallback(
     async (data: CreateTaskData) => {
+      if (!workspaceId) return;
       const tagList = data.tags
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
 
       const newTask = await createTask({
-        workspaceId: 'ws-1',
+        workspaceId,
         title: data.title,
         description: data.description,
         projectId: data.projectId,
@@ -119,7 +128,7 @@ export function TasksView() {
       });
       setTasks((prev) => [newTask, ...prev]);
     },
-    [],
+    [workspaceId],
   );
 
   // Grouped data

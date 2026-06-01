@@ -463,6 +463,30 @@ export async function deleteKnowledgeEntry(id: string): Promise<void> {
 }
 
 /**
+ * Look up an existing knowledge entry by slug within a workspace.
+ * Returns null if not found or on error.
+ */
+export async function findKnowledgeEntryBySlug(
+  slug: string,
+  workspaceId: string
+): Promise<{ id: string } | null> {
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_tree')
+      .select('id')
+      .eq('slug', slug)
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+
+    if (error) return null;
+    if (!data) return null;
+    return { id: (data as { id: string }).id };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get the content of a specific knowledge entry.
  */
 export async function getKnowledgeContent(id: string): Promise<string> {

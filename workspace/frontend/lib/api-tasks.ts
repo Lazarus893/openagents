@@ -115,12 +115,18 @@ export async function fetchTasks(
 
     return data.map((row) => rowToTask(row as Record<string, unknown>));
   } catch {
-    // Fallback to mock data
-    return filterMockTasks(workspaceId, filters);
+    // Fallback to mock data — only in dev for the seeded mock workspace
+    if (workspaceId === 'ws-1' && process.env.NODE_ENV !== 'production') {
+      return filterMockTasks(workspaceId, filters);
+    }
+    return [];
   }
 }
 
 export async function createTask(task: Partial<Task>): Promise<Task> {
+  if (!task.workspaceId) {
+    throw new Error('workspaceId required');
+  }
   try {
     const payload = {
       workspace_id: task.workspaceId,
@@ -151,7 +157,7 @@ export async function createTask(task: Partial<Task>): Promise<Task> {
     // Mock: return a fake created task
     const newTask: Task = {
       id: `task-${Date.now()}`,
-      workspaceId: task.workspaceId || 'ws-1',
+      workspaceId: task.workspaceId,
       projectId: task.projectId || null,
       channelId: task.channelId || null,
       title: task.title || 'New Task',

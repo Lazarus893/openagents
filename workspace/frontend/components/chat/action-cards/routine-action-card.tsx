@@ -20,11 +20,11 @@ export interface RoutineActionMetadata {
 // Component
 // ---------------------------------------------------------------------------
 
-export function RoutineActionCard({ metadata }: { metadata: RoutineActionMetadata }) {
+export function RoutineActionCard({ metadata, onOpen }: { metadata: RoutineActionMetadata; onOpen?: (entity: { type: string; id: string }) => void }) {
   const { routine } = metadata;
 
   return (
-    <div className="rounded-lg border bg-muted/30 border-l-4 border-l-violet-500 max-w-sm p-3 space-y-1.5">
+    <div onClick={() => onOpen?.({ type: 'routine', id: routine.id })} className="rounded-lg border bg-muted/30 border-l-4 border-l-violet-500 max-w-sm p-3 space-y-1.5 cursor-pointer hover:bg-muted/50 transition-colors">
       {/* Header */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <CalendarClock className="size-3.5" />

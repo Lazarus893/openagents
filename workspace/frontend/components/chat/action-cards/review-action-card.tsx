@@ -40,12 +40,12 @@ const REVIEW_STATUS_BADGE: Record<string, { label: string; className: string }> 
 // Component
 // ---------------------------------------------------------------------------
 
-export function ReviewActionCard({ metadata }: { metadata: ReviewActionMetadata }) {
+export function ReviewActionCard({ metadata, onOpen }: { metadata: ReviewActionMetadata; onOpen?: (entity: { type: string; id: string }) => void }) {
   const { review } = metadata;
   const statusInfo = REVIEW_STATUS_BADGE[review.status] || REVIEW_STATUS_BADGE.pending;
 
   return (
-    <div className="rounded-lg border bg-muted/30 border-l-4 border-l-indigo-500 max-w-sm p-3 space-y-1.5">
+    <div onClick={() => onOpen?.({ type: 'review', id: review.taskId })} className="rounded-lg border bg-muted/30 border-l-4 border-l-indigo-500 max-w-sm p-3 space-y-1.5 cursor-pointer hover:bg-muted/50 transition-colors">
       {/* Header */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Eye className="size-3.5" />

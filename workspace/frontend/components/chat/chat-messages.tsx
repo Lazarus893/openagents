@@ -68,9 +68,11 @@ interface ChatMessagesProps {
   hasOlder?: boolean;
   /** Whether older messages are currently being loaded. */
   loadingOlder?: boolean;
+  /** Click handler for action-card entity navigation. */
+  onOpenEntity?: (entity: { type: string; id: string }) => void;
 }
 
-export function ChatMessages({ messages, agents, showAllSteps, className, scrollKey, loadOlder, hasOlder, loadingOlder }: ChatMessagesProps) {
+export function ChatMessages({ messages, agents, showAllSteps, className, scrollKey, loadOlder, hasOlder, loadingOlder, onOpenEntity }: ChatMessagesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
@@ -326,6 +328,7 @@ export function ChatMessages({ messages, agents, showAllSteps, className, scroll
                   <ChatMessage
                     message={group.message}
                     agents={agents}
+                    onOpenEntity={onOpenEntity}
                   />
                 ) : (
                   <IntermediateSteps

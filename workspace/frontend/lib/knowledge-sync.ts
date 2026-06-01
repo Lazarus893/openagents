@@ -1,5 +1,5 @@
 import type { FileNode } from '@/components/files/file-tree';
-import { createKnowledgeEntry, deleteKnowledgeEntry } from './api-knowledge';
+import { createKnowledgeEntry, deleteKnowledgeEntry, updateKnowledgeEntry, findKnowledgeEntryBySlug } from './api-knowledge';
 
 // Snapshot stored in localStorage for diff computation
 interface FileSnapshot {
@@ -17,7 +17,6 @@ export interface SyncResult {
 // Extension whitelist for sync
 const SYNCABLE_EXTENSIONS = ['md', 'txt', 'json', 'yaml', 'yml', 'mdx'];
 const MAX_CONTENT_SIZE = 50000; // 50KB - truncate after this
-const SNAPSHOT_KEY = 'knowledge-sync-file-snapshot';
 
 /**
  * Flatten a FileNode tree into a list of files (skip directories)
@@ -122,7 +121,7 @@ export async function syncFilesToKnowledge(
   readFile: (path: string) => Promise<string>,
   workspaceId: string
 ): Promise<SyncResult> {
-  const oldSnapshot = loadFileSnapshot();
+  const oldSnapshot = loadFileSnapshot(workspaceId);
   const diff = computeFileDiff(oldSnapshot, newTree);
 
   const result: SyncResult = { created: 0, updated: 0, removed: 0 };
@@ -162,18 +161,24 @@ export async function syncFilesToKnowledge(
       }
 
       const extension = path.split('.').pop() || 'md';
-      // Create as new entry (update would require finding existing ID by slug)
-      await createKnowledgeEntry({
-        title: pathToTitle(path),
-        slug: pathToSlug(path),
-        content,
-        contentType: 'markdown',
-        knowledgeType: 'global',
-        category: extension,
-        isFolder: false,
-        position: 0,
-        workspaceId,
-      });
+      const slug = pathToSlug(path);
+      const existing = await findKnowledgeEntryBySlug(slug, workspaceId);
+      if (existing?.id) {
+        await updateKnowledgeEntry(existing.id, { content });
+      } else {
+        // No existing row found — fall through to create
+        await createKnowledgeEntry({
+          title: pathToTitle(path),
+          slug,
+          content,
+          contentType: 'markdown',
+          knowledgeType: 'global',
+          category: extension,
+          isFolder: false,
+          position: 0,
+          workspaceId,
+        });
+      }
       result.updated++;
     } catch {
       // Skip files that fail to read
@@ -193,7 +198,7 @@ export async function syncFilesToKnowledge(
   }
 
   // Save current state as new snapshot
-  saveFileSnapshot(newTree);
+  saveFileSnapshot(newTree, workspaceId);
 
   return result;
 }
@@ -201,7 +206,7 @@ export async function syncFilesToKnowledge(
 /**
  * Save current file tree as snapshot to localStorage
  */
-export function saveFileSnapshot(tree: FileNode): void {
+export function saveFileSnapshot(tree: FileNode, workspaceId: string): void {
   try {
     const files = flattenFiles(tree);
     const syncableFiles = files.filter(
@@ -214,7 +219,7 @@ export function saveFileSnapshot(tree: FileNode): void {
       timestamp: Date.now(),
     }));
 
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+    localStorage.setItem(`knowledge-sync-snapshot:${workspaceId}`, JSON.stringify(snapshot));
   } catch {
     // localStorage might be full or unavailable
   }
@@ -223,9 +228,9 @@ export function saveFileSnapshot(tree: FileNode): void {
 /**
  * Load previous snapshot from localStorage
  */
-export function loadFileSnapshot(): FileSnapshot[] | null {
+export function loadFileSnapshot(workspaceId: string): FileSnapshot[] | null {
   try {
-    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    const raw = localStorage.getItem(`knowledge-sync-snapshot:${workspaceId}`);
     if (!raw) return null;
     return JSON.parse(raw) as FileSnapshot[];
   } catch {
