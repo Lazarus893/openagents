@@ -18,7 +18,30 @@ interface OpenAgentsAuthContextValue {
   signOut: () => Promise<void>;
 }
 
-const OPENAGENTS_HOSTNAMES = ['workspace.openagents.org', 'localhost'];
+/**
+ * Hostnames where the OpenAgents Firebase Sign-In button is enabled.
+ *
+ * Comma-separated list from `NEXT_PUBLIC_AUTH_HOSTS`. Entries starting with
+ * `*.` are suffix wildcards (e.g. `*.vercel.app` matches every preview domain).
+ * Falls back to the canonical prod host + localhost + the current production
+ * Vercel alias.
+ */
+const RAW_HOSTS =
+  process.env.NEXT_PUBLIC_AUTH_HOSTS ??
+  'workspace.openagents.org,localhost,frontend-two-flax-61.vercel.app,*.vercel.app';
+const OPENAGENTS_HOSTNAMES = RAW_HOSTS.split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
+
+function isOpenAgentsHost(hostname: string): boolean {
+  return OPENAGENTS_HOSTNAMES.some((entry) => {
+    if (entry.startsWith('*.')) {
+      // '*.vercel.app' → match anything ending with '.vercel.app'
+      return hostname.endsWith(entry.slice(1));
+    }
+    return hostname === entry;
+  });
+}
 
 const OpenAgentsAuthContext = createContext<OpenAgentsAuthContextValue | null>(null);
 
@@ -36,7 +59,7 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-    const isDomain = OPENAGENTS_HOSTNAMES.includes(hostname);
+    const isDomain = isOpenAgentsHost(hostname);
     setIsOpenAgentsDomain(isDomain);
 
     if (!isDomain) {

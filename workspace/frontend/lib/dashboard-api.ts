@@ -54,14 +54,33 @@ async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T>
   return json.data;
 }
 
+/**
+ * Dashboard / workspace listing helpers.
+ *
+ * Note: the backend currently has no `/v1/auth/*` or `/v1/ws` endpoints — only
+ * `/v1/workspaces`. So `listMyWorkspaces` returns an empty page (no per-user
+ * workspace registry exists yet) and `createWorkspace` delegates to
+ * `createWorkspaceLocal` which actually works.
+ */
 export async function listMyWorkspaces(
-  page = 1,
-  pageSize = 50,
-  status?: string,
+  _page = 1,
+  _pageSize = 50,
+  _status?: string,
 ): Promise<PaginatedWorkspaces> {
-  let url = `/v1/ws?page=${page}&page_size=${pageSize}`;
-  if (status) url += `&status=${status}`;
-  return authFetch<PaginatedWorkspaces>(url);
+  void _page;
+  void _pageSize;
+  void _status;
+  return {
+    items: [],
+    pagination: {
+      page: 1,
+      page_size: 50,
+      total: 0,
+      total_pages: 1,
+      has_next: false,
+      has_prev: false,
+    },
+  };
 }
 
 export async function createWorkspace(
@@ -74,10 +93,9 @@ export async function createWorkspace(
   token: string;
   url: string;
 }> {
-  return authFetch('/v1/ws', {
-    method: 'POST',
-    body: JSON.stringify({ agent_name: agentName, name: name || undefined }),
-  });
+  // Delegate to the unauthenticated POST /v1/workspaces endpoint — the only
+  // workspace-creation path the backend actually exposes today.
+  return createWorkspaceLocal(agentName, name);
 }
 
 /**

@@ -32,8 +32,12 @@ class Config:
     # Agent offline timeout in seconds
     AGENT_TIMEOUT_SECONDS: int = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "60"))
 
-    # CORS origins (comma-separated)
-    CORS_ORIGINS: str = os.environ.get("CORS_ORIGINS", "*")
+    # CORS origins (comma-separated). Avoid "*" with allow_credentials=True —
+    # browsers reject that combo. Override on Railway via $CORS_ORIGINS.
+    CORS_ORIGINS: str = os.environ.get(
+        "CORS_ORIGINS",
+        "https://workspace.openagents.org,https://frontend-two-flax-61.vercel.app,http://localhost:3000",
+    )
 
     # File storage
     FILE_STORAGE_BACKEND: str = os.environ.get("FILE_STORAGE_BACKEND", "local")  # "local" or "s3"

@@ -194,39 +194,108 @@ export const ROUTINE_TYPE_LABELS: Record<RoutineV2['routineType'], string> = {
 };
 
 // ---------------------------------------------------------------------------
-// API helpers (mock)
+// API helpers — wired to real backend (/v1/routines), with dev-only mock fallback
 // ---------------------------------------------------------------------------
 
-export async function fetchRoutinesV2(_workspaceId: string): Promise<RoutineV2[]> {
-  // In production, this would query the routines_v2 table via Supabase
-  return MOCK_ROUTINES_V2.filter((r) => r.status === 'active');
+import { workspaceApi } from './api';
+
+const isProd = process.env.NODE_ENV === 'production';
+
+function mapRoutineToV2(
+  r: {
+    id: string;
+    name: string;
+    message: string;
+    context: string | null;
+    scheduleHour: number;
+    scheduleMinute: number;
+    scheduleDays: number[] | null;
+    scheduleIntervalMinutes: number | null;
+    nextFiresAt: string;
+    lastFiredAt: string | null;
+    status: string;
+    createdBy: string;
+    channelName: string;
+    createdAt: string | null;
+  },
+  workspaceId: string,
+): RoutineV2 {
+  return {
+    id: r.id,
+    workspaceId,
+    projectId: null,
+    name: r.name,
+    // backend doesn't carry a routineType column — default to 'custom'
+    routineType: 'custom',
+    message: r.message,
+    context: r.context,
+    scheduleHour: r.scheduleHour,
+    scheduleMinute: r.scheduleMinute,
+    scheduleDays: r.scheduleDays ?? [0, 1, 2, 3, 4, 5, 6],
+    scheduleIntervalMinutes: r.scheduleIntervalMinutes,
+    status: (r.status === 'active' || r.status === 'paused' || r.status === 'cancelled')
+      ? r.status
+      : 'active',
+    lastOutput: null,
+    outputChannel: r.channelName || null,
+    createdBy: r.createdBy,
+    lastFiredAt: r.lastFiredAt,
+    nextFiresAt: r.nextFiresAt,
+    createdAt: r.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export async function fetchRoutinesV2(workspaceId: string): Promise<RoutineV2[]> {
+  try {
+    const { routines } = await workspaceApi.listRoutines();
+    return routines.map((r) => mapRoutineToV2(r, workspaceId)).filter((r) => r.status === 'active');
+  } catch (err) {
+    if (isProd) throw err;
+    console.warn('[fetchRoutinesV2] backend unreachable, returning mock data', err);
+    return MOCK_ROUTINES_V2.filter((r) => r.status === 'active');
+  }
 }
 
 export async function createRoutineFromTemplate(
-  _workspaceId: string,
-  _template: RoutineTemplate,
-  _createdBy: string,
+  workspaceId: string,
+  template: RoutineTemplate,
+  createdBy: string,
 ): Promise<RoutineV2> {
-  // Mock: return a new routine based on the template
-  const id = `routine-v2-${Date.now()}`;
-  return {
-    id,
-    workspaceId: _workspaceId,
-    projectId: null,
-    name: _template.name,
-    routineType: _template.routineType,
-    message: _template.message,
-    context: null,
-    scheduleHour: _template.scheduleHour,
-    scheduleMinute: _template.scheduleMinute,
-    scheduleDays: _template.scheduleDays,
-    scheduleIntervalMinutes: null,
-    status: 'active',
-    lastOutput: null,
-    outputChannel: null,
-    createdBy: _createdBy,
-    lastFiredAt: null,
-    nextFiresAt: new Date(Date.now() + 86400000).toISOString(),
-    createdAt: new Date().toISOString(),
-  };
+  // Backend `source` must be a known agent name; strip the `openagents:` prefix.
+  const source = createdBy.replace(/^openagents:/, '');
+  try {
+    const r = await workspaceApi.createRoutine({
+      name: template.name,
+      message: template.message,
+      source,
+      hour: template.scheduleHour,
+      minute: template.scheduleMinute,
+      days: template.scheduleDays,
+    });
+    return mapRoutineToV2(r, workspaceId);
+  } catch (err) {
+    if (isProd) throw err;
+    console.warn('[createRoutineFromTemplate] backend unreachable, synthesising mock', err);
+    const id = `routine-v2-${Date.now()}`;
+    return {
+      id,
+      workspaceId,
+      projectId: null,
+      name: template.name,
+      routineType: template.routineType,
+      message: template.message,
+      context: null,
+      scheduleHour: template.scheduleHour,
+      scheduleMinute: template.scheduleMinute,
+      scheduleDays: template.scheduleDays,
+      scheduleIntervalMinutes: null,
+      status: 'active',
+      lastOutput: null,
+      outputChannel: null,
+      createdBy,
+      lastFiredAt: null,
+      nextFiresAt: new Date(Date.now() + 86400000).toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+  }
 }

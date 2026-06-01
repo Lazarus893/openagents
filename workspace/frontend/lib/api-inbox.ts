@@ -282,12 +282,76 @@ export const PRIORITY_FILTER_OPTIONS: { value: InboxPriorityFilter; label: strin
 ];
 
 // ---------------------------------------------------------------------------
-// API helpers (mock)
+// API helpers — wired to /v1/notifications, with dev-only mock fallback
 // ---------------------------------------------------------------------------
 
-export async function fetchInboxItems(_workspaceId: string): Promise<InboxItem[]> {
-  // In production, this would query the inbox_items table via Supabase
-  return MOCK_INBOX_ITEMS.filter((item) => !item.isDismissed);
+import { workspaceApi } from './api';
+import type { NotificationItem } from './types';
+
+const isProd = process.env.NODE_ENV === 'production';
+
+function inferSourceType(n: NotificationItem): InboxItem['sourceType'] {
+  const cb = (n.createdBy || '').toLowerCase();
+  if (cb.startsWith('routine')) return 'routine';
+  if (cb.startsWith('task')) return 'task';
+  if (cb.startsWith('system') || cb === 'system') return 'system';
+  return 'agent';
+}
+
+function inferCategory(n: NotificationItem): InboxItem['category'] {
+  if (n.priority === 'high') return 'action_required';
+  return 'info';
+}
+
+function notificationToInboxItem(n: NotificationItem, workspaceId: string): InboxItem {
+  return {
+    id: n.id,
+    workspaceId,
+    sourceType: inferSourceType(n),
+    sourceId: n.threadId,
+    title: n.title,
+    message: n.message,
+    priority: n.priority,
+    category: inferCategory(n),
+    isRead: n.isRead,
+    isDismissed: n.status === 'dismissed',
+    actionUrl: n.linkUrl,
+    actionLabel: n.linkUrl ? 'Open' : null,
+    agentName: n.createdBy.replace(/^openagents:/, '') || null,
+    channelId: n.channelName,
+    projectId: null,
+    metadata: {},
+    createdAt: n.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export async function fetchInboxItems(workspaceId: string): Promise<InboxItem[]> {
+  try {
+    const { notifications } = await workspaceApi.listNotifications({ status: 'active' });
+    return notifications.map((n) => notificationToInboxItem(n, workspaceId));
+  } catch (err) {
+    if (isProd) throw err;
+    console.warn('[fetchInboxItems] backend unreachable, returning mock data', err);
+    return MOCK_INBOX_ITEMS.filter((item) => !item.isDismissed);
+  }
+}
+
+export async function markInboxItemRead(itemId: string): Promise<void> {
+  try {
+    await workspaceApi.markNotificationRead(itemId);
+  } catch (err) {
+    if (isProd) throw err;
+    console.warn('[markInboxItemRead] backend unreachable', err);
+  }
+}
+
+export async function dismissInboxItem(itemId: string): Promise<void> {
+  try {
+    await workspaceApi.dismissNotification(itemId);
+  } catch (err) {
+    if (isProd) throw err;
+    console.warn('[dismissInboxItem] backend unreachable', err);
+  }
 }
 
 export function getUnreadCount(items: InboxItem[]): number {

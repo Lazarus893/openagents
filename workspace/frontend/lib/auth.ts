@@ -41,34 +41,25 @@ export function clearAuth() {
   Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
 }
 
-export async function login(email: string, password: string): Promise<AuthState> {
-  const res = await fetch(`${API_URL}/v1/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.message || body?.detail || `Login failed (${res.status})`);
-  }
-  const json = await res.json();
-  storeAuth(json.data);
-  return getStoredAuth();
+/**
+ * Email/password login is disabled — the backend doesn't expose `/v1/auth/login`
+ * or `/v1/auth/refresh`. Use Firebase Sign-In via OpenAgentsAuthProvider, or
+ * the workspace_token mode via createWorkspaceLocal().
+ *
+ * These stubs exist so legacy callers don't crash; they throw / return null
+ * loudly enough that any UI still wired to email login will surface an error.
+ */
+export async function login(_email: string, _password: string): Promise<AuthState> {
+  void _email;
+  void _password;
+  void API_URL; // keep import live for now in case callers re-enable
+  throw new Error(
+    'Email/password login is disabled — sign in with Google via OpenAgentsAuthProvider.',
+  );
 }
 
 export async function refreshAccessToken(): Promise<string | null> {
-  const { refreshToken } = getStoredAuth();
-  if (!refreshToken) return null;
-  const res = await fetch(`${API_URL}/v1/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!res.ok) {
-    clearAuth();
-    return null;
-  }
-  const json = await res.json();
-  localStorage.setItem(STORAGE_KEYS.accessToken, json.data.access_token);
-  return json.data.access_token;
+  // No `/v1/auth/refresh` endpoint exists on the backend. Refresh tokens are
+  // only meaningful for the email/password flow which is currently disabled.
+  return null;
 }
