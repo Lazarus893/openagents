@@ -3,8 +3,8 @@
 channel_sections, channel_human_members tables, and extend channels with
 project_id, section_id, position, channel_type, agent_roles.
 
-Revision ID: 023
-Revises: 022
+Revision ID: 024
+Revises: 023
 Create Date: 2026-05-28
 """
 
@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-revision = "023"
-down_revision = "022"
+revision = "024"
+down_revision = "023"
 branch_labels = None
 depends_on = None
 
@@ -75,17 +75,11 @@ def upgrade() -> None:
     )
     op.create_index("idx_channel_sections_project", "channel_sections", ["project_id"])
 
-    # --- Channel human members table ---
-    op.create_table(
-        "channel_human_members",
-        sa.Column("channel_id", UUID(as_uuid=False), sa.ForeignKey("channels.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_email", sa.Text(), nullable=False),
-        sa.Column("role", sa.Text(), server_default="member"),
-        sa.Column("last_read_event_id", sa.Text(), nullable=True),
-        sa.Column("joined_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
-        sa.PrimaryKeyConstraint("channel_id", "user_email"),
-    )
-    op.create_index("idx_channel_human_members_email", "channel_human_members", ["user_email"])
+    # --- Extend channel_human_members table (created by 023) with role + last_read_event_id ---
+    # Migration 023 (human_mention_identity) already created this table with
+    # (channel_id, user_email, joined_at). We add the project-system columns.
+    op.add_column("channel_human_members", sa.Column("role", sa.Text(), server_default="member", nullable=True))
+    op.add_column("channel_human_members", sa.Column("last_read_event_id", sa.Text(), nullable=True))
 
     # --- Extend channels table ---
     op.add_column("channels", sa.Column("project_id", UUID(as_uuid=False), nullable=True))
@@ -112,8 +106,12 @@ def downgrade() -> None:
     op.drop_column("channels", "section_id")
     op.drop_column("channels", "project_id")
 
+    # Drop the columns we added to channel_human_members (table itself
+    # belongs to migration 023's lifecycle, don't drop it here)
+    op.drop_column("channel_human_members", "last_read_event_id")
+    op.drop_column("channel_human_members", "role")
+
     # Drop new tables (reverse order of creation)
-    op.drop_table("channel_human_members")
     op.drop_table("channel_sections")
     op.drop_table("project_contexts")
     op.drop_table("project_members")

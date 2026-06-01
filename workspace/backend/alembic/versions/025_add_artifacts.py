@@ -7,8 +7,8 @@ blob storage_key (reuses FileStore). Each chat message can reference an
 artifact via events.artifact_id (1:1 primary) and metadata.artifact_ids
 (N:1 when a single message emits multiple artifacts).
 
-Revision ID: 024
-Revises: 023
+Revision ID: 025
+Revises: 024
 Create Date: 2026-06-01
 """
 
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 
-revision = "024"
-down_revision = "023"
+revision = "025"
+down_revision = "024"
 branch_labels = None
 depends_on = None
 
