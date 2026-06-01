@@ -107,6 +107,42 @@ export function KnowledgeView() {
     return () => window.removeEventListener('knowledge-synced', handleSync);
   }, [loadTree]);
 
+  // Listen for open-knowledge events from chat action cards
+  useEffect(() => {
+    const handleOpen = async (e: Event) => {
+      const id = (e as CustomEvent).detail?.id as string | undefined;
+      if (!id) return;
+      const findNode = (nodes: KnowledgeNode[]): KnowledgeNode | null => {
+        for (const n of nodes) {
+          if (n.id === id || n.slug === id) return n;
+          if (n.children) {
+            const child = findNode(n.children);
+            if (child) return child;
+          }
+        }
+        return null;
+      };
+      const node = findNode(tree);
+      if (node) {
+        setSelectedNode(node);
+        setMobileDetail(true);
+        if (!node.isFolder) {
+          setLoadingContent(true);
+          try {
+            const content = await getKnowledgeContent(node.id);
+            setSelectedContent(content);
+          } catch {
+            setSelectedContent('Failed to load content.');
+          } finally {
+            setLoadingContent(false);
+          }
+        }
+      }
+    };
+    window.addEventListener('open-knowledge', handleOpen);
+    return () => window.removeEventListener('open-knowledge', handleOpen);
+  }, [tree]);
+
   // Select a node
   const handleSelect = useCallback(async (node: KnowledgeNode) => {
     setSelectedNode(node);

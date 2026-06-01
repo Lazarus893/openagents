@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Search, Upload, FolderOpen, Trash2, TreePine, Clock } from 'lucide-react';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout } from '@/components/layout/layout-context';
@@ -19,6 +19,39 @@ export function FileList() {
   const [viewTab, setViewTab] = useState<ViewTab>('tree');
   const [localSelectedPath, setLocalSelectedPath] = useState<string | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Listen for open-file events from chat action cards
+  useEffect(() => {
+    const handleOpen = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id as string | undefined;
+      if (!id) return;
+      // Check if it's a server-managed file id
+      const file = files.find((f) => f.id === id);
+      if (file) {
+        setViewTab('recent');
+        setSelectedFileId(id);
+        if (isMobile) openMobileDetail();
+        // Highlight after render
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const el = document.querySelector(`[data-file-id="${id}"]`) as HTMLElement | null;
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-primary');
+              setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 2000);
+            }
+          }, 150);
+        });
+      } else {
+        // May be a local-fs path — dispatch to file-preview
+        window.dispatchEvent(new CustomEvent('local-file-select', { detail: { path: id } }));
+        setLocalSelectedPath(id);
+        if (isMobile) openMobileDetail();
+      }
+    };
+    window.addEventListener('open-file', handleOpen);
+    return () => window.removeEventListener('open-file', handleOpen);
+  }, [files, setSelectedFileId, isMobile, openMobileDetail]);
 
   // Flat list of all files, sorted by most recently modified
   const recentFiles = useMemo(() => {
@@ -172,6 +205,7 @@ export function FileList() {
               {recentFiles.map((file) => (
                 <div
                   key={file.id}
+                  data-file-id={file.id}
                   onClick={() => {
                     setSelectedFileId(file.id);
                     if (isMobile) openMobileDetail();

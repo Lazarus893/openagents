@@ -1,7 +1,10 @@
 'use client';
 
-import { ExternalLink, X, Download, Star, User, Tag, FolderOpen, Globe } from 'lucide-react';
+import { useState } from 'react';
+import { ExternalLink, X, Download, Star, User, Tag, FolderOpen, Globe, Check, Loader2 } from 'lucide-react';
 import { type LocalSkill, type OnlineSkill } from '@/lib/api-skills';
+import type { WorkspaceAgent } from '@/lib/types';
+import { AgentAvatar } from '@/components/agents/agent-avatar';
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -17,11 +20,33 @@ function isOnlineSkill(skill: LocalSkill | OnlineSkill): skill is OnlineSkill {
 
 interface SkillDetailPanelProps {
   skill: LocalSkill | OnlineSkill;
+  agents: WorkspaceAgent[];
   onClose: () => void;
+  onInstall: (agentName: string, skillSlug: string) => Promise<void>;
+  onUninstall: (agentName: string, skillSlug: string) => Promise<void>;
 }
 
-export function SkillDetailPanel({ skill, onClose }: SkillDetailPanelProps) {
+export function SkillDetailPanel({ skill, agents, onClose, onInstall, onUninstall }: SkillDetailPanelProps) {
   const online = isOnlineSkill(skill);
+  const [busyAgent, setBusyAgent] = useState<string | null>(null);
+
+  const isInstalledForAgent = (agent: WorkspaceAgent): boolean => {
+    if (!agent.enabledSkills) return false;
+    return agent.enabledSkills[skill.slug] === true;
+  };
+
+  const handleToggle = async (agentName: string, currentlyInstalled: boolean) => {
+    setBusyAgent(agentName);
+    try {
+      if (currentlyInstalled) {
+        await onUninstall(agentName, skill.slug);
+      } else {
+        await onInstall(agentName, skill.slug);
+      }
+    } finally {
+      setBusyAgent(null);
+    }
+  };
 
   return (
     <>
@@ -170,6 +195,57 @@ export function SkillDetailPanel({ skill, onClose }: SkillDetailPanelProps) {
               <p className="text-xs text-foreground">{(skill as OnlineSkill).descriptionZh}</p>
             </div>
           )}
+
+          {/* Install / Uninstall per agent */}
+          <div className="rounded-lg border border-border p-3">
+            <div className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+              Install for agent
+            </div>
+            {agents.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No agents in this workspace yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {agents.map((agent) => {
+                  const installed = isInstalledForAgent(agent);
+                  const busy = busyAgent === agent.agentName;
+                  return (
+                    <div
+                      key={agent.agentName}
+                      className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <AgentAvatar name={agent.agentName} size={20} />
+                        <span className="text-xs font-medium truncate">{agent.agentName}</span>
+                      </div>
+                      <button
+                        onClick={() => handleToggle(agent.agentName, installed)}
+                        disabled={busy}
+                        className={`shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+                          installed
+                            ? 'bg-emerald-500/10 text-emerald-600 hover:bg-red-500/10 hover:text-red-600'
+                            : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                        } disabled:opacity-50`}
+                      >
+                        {busy ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : installed ? (
+                          <>
+                            <Check className="size-3" />
+                            Installed
+                          </>
+                        ) : (
+                          <>
+                            <Download className="size-3" />
+                            Install
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Footer */}

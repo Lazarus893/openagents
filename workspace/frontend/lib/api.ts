@@ -964,6 +964,57 @@ class WorkspaceApi {
     await this.request<unknown>(`/v1/routines/${routineId}`, { method: 'DELETE' });
   }
 
+  async updateRoutine(routineId: string, params: {
+    name?: string;
+    message?: string;
+    context?: string;
+    hour?: number;
+    minute?: number;
+    days?: number[];
+    interval_minutes?: number;
+    status?: 'active' | 'paused';
+  }): Promise<import('./types').RoutineItem> {
+    const raw = await this.request<Record<string, unknown>>(`/v1/routines/${routineId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...params, network: this.workspaceId }),
+    });
+    return {
+      id: raw.id as string,
+      name: raw.name as string,
+      message: raw.message as string,
+      context: (raw.context || null) as string | null,
+      scheduleHour: (raw.schedule_hour || 0) as number,
+      scheduleMinute: (raw.schedule_minute || 0) as number,
+      scheduleDays: (raw.schedule_days || null) as number[] | null,
+      scheduleIntervalMinutes: (raw.schedule_interval_minutes || null) as number | null,
+      timezone: (raw.timezone || 'UTC') as string,
+      nextFiresAt: (raw.next_fires_at || '') as string,
+      lastFiredAt: (raw.last_fired_at || null) as string | null,
+      status: (raw.status || 'active') as string,
+      createdBy: (raw.created_by || '') as string,
+      channelName: (raw.channel_name || '') as string,
+      createdAt: (raw.created_at || null) as string | null,
+    };
+  }
+
+  async getRoutineHistory(routineId: string): Promise<{
+    routineId: string;
+    channelName: string;
+    lastFiredAt: string | null;
+    nextFiresAt: string | null;
+    status: string;
+  }> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    const raw = await this.request<Record<string, unknown>>(`/v1/routines/${routineId}/history?${params}`);
+    return {
+      routineId: raw.routine_id as string,
+      channelName: raw.channel_name as string,
+      lastFiredAt: (raw.last_fired_at ?? null) as string | null,
+      nextFiresAt: (raw.next_fires_at ?? null) as string | null,
+      status: (raw.status || 'active') as string,
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Notifications / Inbox
   // ---------------------------------------------------------------------------

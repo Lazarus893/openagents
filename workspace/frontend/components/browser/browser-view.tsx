@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Globe, X, RefreshCw, Users, ChevronLeft, Lock, Unlock, Maximize2, Minimize2 } from 'lucide-react';
+import { Globe, X, RefreshCw, Users, ChevronLeft, Lock, Unlock, Maximize2, Minimize2, Settings as SettingsIcon, AlertCircle } from 'lucide-react';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout } from '@/components/layout/layout-context';
 import { workspaceApi } from '@/lib/api';
@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 
 export function BrowserView() {
   const {
+    workspace,
     browserTabs, selectedBrowserTabId, setSelectedBrowserTabId,
     closeBrowserTab, navigateBrowserTab, reconnectBrowserTab, persistBrowserTab, unpersistBrowserTab, browserContexts,
     refreshBrowserTabs,
@@ -191,6 +192,7 @@ export function BrowserView() {
 
   // No tab selected — show browser landing page
   if (!tab) {
+    const bfMissing = workspace && !workspace.browserfabricApiKey;
     return (
       <div className="flex flex-col h-full">
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 h-10">
@@ -199,16 +201,42 @@ export function BrowserView() {
           <div className="flex-1" />
         </div>
         <div className="flex-1 flex flex-col items-center justify-center gap-4 text-muted-foreground p-8">
-          <Globe className="size-12 opacity-20" />
-          <div className="text-center space-y-2">
-            <p className="text-sm font-medium text-foreground">共享浏览器</p>
-            <p className="text-xs text-muted-foreground max-w-sm">
-              Agent 可以在此打开网页、截图、填表单。所有成员实时共享同一浏览器视图。
-            </p>
-            <p className="text-xs text-muted-foreground/60">
-              在对话中让 Agent 打开网页，或通过 Agent 的浏览工具操作网页内容。
-            </p>
-          </div>
+          {bfMissing ? (
+            <>
+              <AlertCircle className="size-12 text-amber-500/70" />
+              <div className="text-center space-y-2 max-w-sm">
+                <p className="text-sm font-medium text-foreground">需要配置 Browser Fabric API Key</p>
+                <p className="text-xs text-muted-foreground">
+                  共享浏览器使用 Browser Fabric 远程服务运行真实浏览器。请在 workspace 设置中输入 API key,或联系管理员开通自动配额。
+                </p>
+                <p className="text-[11px] text-muted-foreground/70">
+                  入口:左下角 workspace 名 → ⚙️ 设置 → Browser Fabric API Key
+                </p>
+                <a
+                  href="https://browserfabric.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 mt-2 text-xs text-primary hover:underline"
+                >
+                  <SettingsIcon className="size-3" />
+                  了解 Browser Fabric
+                </a>
+              </div>
+            </>
+          ) : (
+            <>
+              <Globe className="size-12 opacity-20" />
+              <div className="text-center space-y-2">
+                <p className="text-sm font-medium text-foreground">共享浏览器</p>
+                <p className="text-xs text-muted-foreground max-w-sm">
+                  Agent 可以在此打开网页、截图、填表单。所有成员实时共享同一浏览器视图。
+                </p>
+                <p className="text-xs text-muted-foreground/60">
+                  在对话中让 Agent 打开网页,或通过 Agent 的浏览工具操作网页内容。
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

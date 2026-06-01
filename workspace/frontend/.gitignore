@@ -5,3 +5,4 @@ node_modules/
 
 # InsForge CLI local link (contains api_key — never commit)
 .insforge/
+.vercel

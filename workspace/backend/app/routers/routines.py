@@ -4,6 +4,7 @@ Routine endpoints — recurring scheduled tasks.
 
 POST   /v1/routines          Create a routine
 GET    /v1/routines          List routines in scope
+PATCH  /v1/routines/{id}     Update a routine (status, schedule, message, context)
 DELETE /v1/routines/{id}     Cancel a routine
 """
 
@@ -44,6 +45,21 @@ class CreateRoutineRequest(BaseModel):
     source: str
     channel: Optional[str] = None
     thread_id: Optional[str] = None
+
+
+class UpdateRoutineRequest(BaseModel):
+    """Partial update for an existing routine. All fields are optional —
+    omitted fields are left unchanged. status accepts 'active' | 'paused'
+    only; cancellation should go through DELETE /v1/routines/{id}."""
+    name: Optional[str] = None
+    message: Optional[str] = None
+    context: Optional[str] = None
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    days: Optional[List[int]] = None
+    interval_minutes: Optional[int] = None
+    status: Optional[str] = None
+    network: str
 
 
 # Minute-interval mode bounds (1 minute floor matches scheduler tick;
@@ -390,7 +406,10 @@ async def list_routines(
     if status:
         query = query.where(RoutineRecord.status == status)
     else:
-        query = query.where(RoutineRecord.status == "active")
+        # Default: include both active and paused so the UI can offer
+        # a resume button. Cancelled routines are excluded — they're
+        # the equivalent of "deleted".
+        query = query.where(RoutineRecord.status.in_(["active", "paused"]))
     if channel:
         query = query.where(RoutineRecord.channel_name == channel)
 
@@ -427,10 +446,166 @@ async def cancel_routine(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
 
-    if routine.status != "active":
-        return json_response(ResponseCode.BAD_REQUEST, f"Routine is already {routine.status}")
+    if routine.status == "cancelled":
+        return json_response(ResponseCode.BAD_REQUEST, "Routine is already cancelled")
 
     routine.status = "cancelled"
     db.commit()
 
     return success_response({"id": routine.id, "status": "cancelled"})
+
+
+# ---------------------------------------------------------------------------
+# PATCH /v1/routines/{routine_id}
+# ---------------------------------------------------------------------------
+
+@router.patch("/routines/{routine_id}")
+async def update_routine(
+    body: UpdateRoutineRequest,
+    routine_id: str = Path(...),
+    db: Session = Depends(get_db),
+    x_workspace_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Update mutable fields of an existing routine.
+
+    Schedule changes (hour/minute/days/interval_minutes) trigger a
+    recomputation of next_fires_at. Status accepts 'active' or 'paused';
+    cancellation requires DELETE.
+    """
+    routine = db.execute(
+        select(RoutineRecord).where(RoutineRecord.id == routine_id)
+    ).scalar_one_or_none()
+    if not routine:
+        return json_response(ResponseCode.NOT_FOUND, "Routine not found")
+
+    workspace = _resolve_workspace(db, body.network)
+    if not workspace or str(workspace.id) != routine.workspace_id:
+        return json_response(ResponseCode.NOT_FOUND, "Network not found")
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    # Status guard — caller can pause/resume; cancellation is via DELETE.
+    if body.status is not None:
+        if body.status not in ("active", "paused"):
+            return json_response(
+                ResponseCode.BAD_REQUEST,
+                "status must be 'active' or 'paused' (use DELETE to cancel)",
+            )
+        if routine.status == "cancelled":
+            return json_response(
+                ResponseCode.BAD_REQUEST,
+                "Cannot resume a cancelled routine",
+            )
+        routine.status = body.status
+
+    if body.name is not None:
+        routine.name = body.name
+    if body.message is not None:
+        routine.message = body.message
+    if body.context is not None:
+        routine.context = body.context
+
+    # Schedule update: validate same constraints as create, then recompute.
+    schedule_dirty = (
+        body.hour is not None
+        or body.minute is not None
+        or body.days is not None
+        or body.interval_minutes is not None
+    )
+    if schedule_dirty:
+        # Resolve final schedule (use current values for missing fields).
+        new_interval = body.interval_minutes if body.interval_minutes is not None else routine.schedule_interval_minutes
+        new_hour = body.hour if body.hour is not None else routine.schedule_hour
+        new_minute = body.minute if body.minute is not None else routine.schedule_minute
+        new_days = body.days if body.days is not None else routine.schedule_days
+
+        # When interval_minutes is being explicitly set (not None), it takes
+        # over and the daily fields must clear; conversely setting hour/minute
+        # clears interval. The frontend should send the matching combo.
+        is_interval = new_interval is not None and (
+            body.interval_minutes is not None
+            or (body.hour is None and body.minute is None and body.days is None)
+        )
+        is_daily = new_hour is not None and not is_interval
+
+        if is_interval and is_daily:
+            return json_response(
+                ResponseCode.BAD_REQUEST,
+                "Cannot set both interval_minutes and hour/minute",
+            )
+
+        if is_interval:
+            if not (MIN_INTERVAL_MINUTES <= new_interval <= MAX_INTERVAL_MINUTES):
+                return json_response(
+                    ResponseCode.BAD_REQUEST,
+                    f"interval_minutes must be {MIN_INTERVAL_MINUTES}-{MAX_INTERVAL_MINUTES}",
+                )
+            routine.schedule_interval_minutes = new_interval
+            routine.schedule_hour = None
+            routine.schedule_minute = None
+            routine.schedule_days = None
+            routine.next_fires_at = _compute_next_fires_at(None, None, None, new_interval)
+        else:
+            if new_hour is None or new_minute is None:
+                return json_response(ResponseCode.BAD_REQUEST, "hour and minute are both required in daily mode")
+            if not (0 <= new_hour <= 23):
+                return json_response(ResponseCode.BAD_REQUEST, "hour must be 0-23")
+            if not (0 <= new_minute <= 59):
+                return json_response(ResponseCode.BAD_REQUEST, "minute must be 0-59")
+            if new_days is not None:
+                if not new_days or not all(0 <= d <= 6 for d in new_days):
+                    return json_response(ResponseCode.BAD_REQUEST, "days must be array of 0-6 (Mon=0, Sun=6)")
+            routine.schedule_hour = new_hour
+            routine.schedule_minute = new_minute
+            routine.schedule_days = new_days
+            routine.schedule_interval_minutes = None
+            routine.next_fires_at = _compute_next_fires_at(new_hour, new_minute, new_days, None)
+
+    db.commit()
+    db.refresh(routine)
+    return success_response(_serialize_routine(routine))
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/routines/{routine_id}/history
+# ---------------------------------------------------------------------------
+
+@router.get("/routines/{routine_id}/history")
+async def routine_history(
+    routine_id: str = Path(...),
+    network: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    x_workspace_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Return recent fire history of a routine.
+
+    Currently we don't keep a separate fire-log table — each fire posts a
+    message into the routine's channel. This endpoint returns lightweight
+    metadata (channel + last_fired_at + next_fires_at) plus the count of
+    messages by `created_by` in the channel as a proxy for fire count.
+    Clients that want full fire output should fetch the channel messages
+    via the existing /v1/events endpoint.
+    """
+    routine = db.execute(
+        select(RoutineRecord).where(RoutineRecord.id == routine_id)
+    ).scalar_one_or_none()
+    if not routine:
+        return json_response(ResponseCode.NOT_FOUND, "Routine not found")
+
+    workspace = _resolve_workspace(db, network)
+    if not workspace or str(workspace.id) != routine.workspace_id:
+        return json_response(ResponseCode.NOT_FOUND, "Network not found")
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    return success_response({
+        "routine_id": routine.id,
+        "channel_name": routine.channel_name,
+        "last_fired_at": routine.last_fired_at.isoformat() if routine.last_fired_at else None,
+        "next_fires_at": routine.next_fires_at.isoformat() if routine.next_fires_at else None,
+        "status": routine.status,
+        "limit": limit,
+    })

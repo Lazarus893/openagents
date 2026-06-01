@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, RefreshCw, Trash2, Plus, BookTemplate } from 'lucide-react';
+import { CalendarClock, RefreshCw, Trash2, Plus, BookTemplate, Pause, Play } from 'lucide-react';
+import { toast } from 'sonner';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout } from '@/components/layout/layout-context';
 import { workspaceApi } from '@/lib/api';
@@ -69,8 +70,27 @@ export function RoutinesView() {
     refreshRoutines();
   }, [refreshRoutines]);
 
+  // Listen for open-routine events from chat action cards
+  useEffect(() => {
+    const handleOpen = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id as string | undefined;
+      if (!id) return;
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const el = document.querySelector(`[data-routine-id="${id}"]`) as HTMLElement | null;
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-violet-500');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-violet-500'), 2000);
+        }, 150);
+      });
+    };
+    window.addEventListener('open-routine', handleOpen);
+    return () => window.removeEventListener('open-routine', handleOpen);
+  }, []);
+
   const activeRoutines = useMemo(
-    () => routines.filter((r) => r.status === 'active'),
+    () => routines.filter((r) => r.status === 'active' || r.status === 'paused'),
     [routines],
   );
 
@@ -80,11 +100,24 @@ export function RoutinesView() {
   };
 
   const handleCancel = async (routineId: string) => {
+    if (!confirm('确定要删除这个 routine 吗?')) return;
     try {
       await workspaceApi.cancelRoutine(routineId);
       await refreshRoutines();
-    } catch {
-      // Ignore
+      toast.success('Routine 已删除');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel');
+    }
+  };
+
+  const handleTogglePause = async (routine: RoutineItem) => {
+    const target: 'active' | 'paused' = routine.status === 'paused' ? 'active' : 'paused';
+    try {
+      await workspaceApi.updateRoutine(routine.id, { status: target });
+      await refreshRoutines();
+      toast.success(target === 'paused' ? 'Routine 已暂停' : 'Routine 已恢复');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update');
     }
   };
 
@@ -164,6 +197,7 @@ export function RoutinesView() {
               return (
                 <div
                   key={routine.id}
+                  data-routine-id={routine.id}
                   className="rounded-lg border border-border bg-card overflow-hidden opacity-80 hover:opacity-100 transition-opacity"
                 >
                   <div className="px-3 py-2.5 flex items-start gap-2.5">
@@ -218,7 +252,12 @@ export function RoutinesView() {
               return (
                 <div
                   key={routine.id}
-                  className="rounded-lg border border-border bg-card overflow-hidden cursor-pointer hover:border-primary/40 transition-colors"
+                  data-routine-id={routine.id}
+                  className={`rounded-lg border bg-card overflow-hidden cursor-pointer transition-colors ${
+                    routine.status === 'paused'
+                      ? 'border-border opacity-60 hover:opacity-100'
+                      : 'border-border hover:border-primary/40'
+                  }`}
                   onClick={() => handleOpenThread(routine.channelName)}
                 >
                   {/* Routine header */}
@@ -231,6 +270,11 @@ export function RoutinesView() {
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium shrink-0">
                           {typeLabel}
                         </span>
+                        {routine.status === 'paused' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-medium shrink-0">
+                            Paused
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {formatSchedule(routine)}
@@ -247,8 +291,12 @@ export function RoutinesView() {
                         <span>{agentName}</span>
                         <span>·</span>
                         <span className="truncate">{channelTitle}</span>
-                        <span>·</span>
-                        <span>next: {timeUntil(routine.nextFiresAt)}</span>
+                        {routine.status === 'active' && (
+                          <>
+                            <span>·</span>
+                            <span>next: {timeUntil(routine.nextFiresAt)}</span>
+                          </>
+                        )}
                         {routine.lastFiredAt && (
                           <>
                             <span>·</span>
@@ -257,13 +305,26 @@ export function RoutinesView() {
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleCancel(routine.id); }}
-                      className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-muted-foreground hover:text-red-500 transition-colors shrink-0"
-                      title="Cancel routine"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleTogglePause(routine); }}
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-violet-600 transition-colors"
+                        title={routine.status === 'paused' ? 'Resume' : 'Pause'}
+                      >
+                        {routine.status === 'paused' ? (
+                          <Play className="size-3.5" />
+                        ) : (
+                          <Pause className="size-3.5" />
+                        )}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCancel(routine.id); }}
+                        className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-muted-foreground hover:text-red-500 transition-colors"
+                        title="Delete routine"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Last Output preview */}

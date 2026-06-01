@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { ListTodo, Plus, RefreshCw, Bookmark } from 'lucide-react';
+import { ListTodo, Plus, RefreshCw, Bookmark, Search, EyeOff, Eye } from 'lucide-react';
 import { fetchTasks, createTask, updateTask } from '@/lib/api-tasks';
 import type { Task } from '@/lib/api-tasks';
 import { TaskFilters, type TaskFilterState } from './task-filters';
@@ -68,6 +68,8 @@ export function TasksView() {
     status: null,
     priority: null,
   });
+  const [search, setSearch] = useState('');
+  const [hideDone, setHideDone] = useState(true);
 
   // Fetch tasks
   const loadTasks = useCallback(async () => {
@@ -95,6 +97,28 @@ export function TasksView() {
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  // Listen for open-task events from chat action cards
+  useEffect(() => {
+    const handleOpen = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id as string | undefined;
+      if (!id) return;
+      // Defer to allow list to render after view switch
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const el = document.querySelector(`[data-task-id="${id}"]`) as HTMLElement | null;
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-primary', 'bg-primary/5', 'rounded-md');
+          setTimeout(() => {
+            el.classList.remove('ring-2', 'ring-primary', 'bg-primary/5', 'rounded-md');
+          }, 2000);
+        }, 150);
+      });
+    };
+    window.addEventListener('open-task', handleOpen);
+    return () => window.removeEventListener('open-task', handleOpen);
+  }, []);
 
   // Task actions
   const handleStatusChange = useCallback(
@@ -131,18 +155,36 @@ export function TasksView() {
     [workspaceId],
   );
 
-  // Grouped data
-  const groups = useMemo(() => groupTasksByProject(tasks), [tasks]);
+  // Apply search + hideDone filter (status filter from TaskFilters takes priority over hideDone)
+  const visibleTasks = useMemo(() => {
+    let list = tasks;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          (t.description?.toLowerCase().includes(q) ?? false) ||
+          t.tags.some((tag) => tag.toLowerCase().includes(q)),
+      );
+    }
+    if (hideDone && !filters.status) {
+      list = list.filter((t) => t.status !== 'completed' && t.status !== 'cancelled');
+    }
+    return list;
+  }, [tasks, search, hideDone, filters.status]);
 
-  // Stats
+  // Grouped data
+  const groups = useMemo(() => groupTasksByProject(visibleTasks), [visibleTasks]);
+
+  // Stats (based on visible)
   const stats = useMemo(() => {
-    const active = tasks.filter(
+    const active = visibleTasks.filter(
       (t) => t.status === 'in_progress' || t.status === 'pending',
     ).length;
-    const humanCount = tasks.filter((t) => t.taskType === 'human').length;
-    const agentCount = tasks.filter((t) => t.taskType === 'agent').length;
-    return { active, humanCount, agentCount, total: tasks.length };
-  }, [tasks]);
+    const humanCount = visibleTasks.filter((t) => t.taskType === 'human').length;
+    const agentCount = visibleTasks.filter((t) => t.taskType === 'agent').length;
+    return { active, humanCount, agentCount, total: visibleTasks.length };
+  }, [visibleTasks]);
 
   return (
     <div className="h-full flex flex-col">
@@ -160,6 +202,17 @@ export function TasksView() {
           </div>
           <div className="flex items-center gap-1.5">
             <button
+              onClick={() => setHideDone((v) => !v)}
+              className={`p-1.5 rounded-md transition-colors ${
+                hideDone
+                  ? 'bg-muted text-foreground'
+                  : 'text-muted-foreground hover:bg-muted'
+              }`}
+              title={hideDone ? '当前隐藏已完成,点击显示' : '当前显示全部,点击隐藏已完成'}
+            >
+              {hideDone ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            </button>
+            <button
               onClick={loadTasks}
               className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
               title="Refresh"
@@ -176,6 +229,18 @@ export function TasksView() {
           </div>
         </div>
 
+        {/* Search */}
+        <div className="relative mb-2">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search tasks by title, description, tag..."
+            className="w-full h-8 pl-8 pr-3 rounded-md border border-input bg-background text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+
         {/* Filters */}
         <TaskFilters filters={filters} onChange={setFilters} />
       </div>
@@ -186,13 +251,15 @@ export function TasksView() {
           <div className="flex items-center justify-center h-32">
             <RefreshCw className="size-4 text-muted-foreground animate-spin" />
           </div>
-        ) : tasks.length === 0 ? (
+        ) : visibleTasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-8">
             <ListTodo className="size-8 opacity-30" />
             <p className="text-sm">No tasks found</p>
             <p className="text-xs opacity-60">
-              {filters.projectId || filters.taskType || filters.status || filters.priority
-                ? 'Try adjusting your filters'
+              {search || filters.projectId || filters.taskType || filters.status || filters.priority
+                ? 'Try adjusting your search or filters'
+                : tasks.length > 0 && hideDone
+                ? 'All tasks are completed — click eye icon to show'
                 : 'Click "New Task" to get started'}
             </p>
           </div>

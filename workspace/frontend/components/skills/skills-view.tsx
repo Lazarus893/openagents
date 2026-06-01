@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { Sparkles, Monitor, Globe } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { LocalSkillsTab } from './local-skills-tab';
 import { OnlineSkillsTab } from './online-skills-tab';
 import { SkillDetailPanel } from './skill-detail-panel';
 import { type LocalSkill, type OnlineSkill } from '@/lib/api-skills';
+import { useWorkspace } from '@/lib/workspace-context';
+import { workspaceApi } from '@/lib/api';
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -24,8 +27,29 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 // ---------------------------------------------------------------------------
 
 export function SkillsView() {
+  const { agents, refreshAgents } = useWorkspace();
   const [activeTab, setActiveTab] = useState<TabId>('local');
   const [selectedSkill, setSelectedSkill] = useState<LocalSkill | OnlineSkill | null>(null);
+
+  const handleInstall = async (agentName: string, skillSlug: string) => {
+    try {
+      await workspaceApi.installSkill(agentName, skillSlug);
+      toast.success(`Installed "${skillSlug}" for ${agentName}`);
+      if (refreshAgents) await refreshAgents();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to install skill');
+    }
+  };
+
+  const handleUninstall = async (agentName: string, skillSlug: string) => {
+    try {
+      await workspaceApi.uninstallSkill(agentName, skillSlug);
+      toast.success(`Uninstalled "${skillSlug}" from ${agentName}`);
+      if (refreshAgents) await refreshAgents();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to uninstall skill');
+    }
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -67,7 +91,13 @@ export function SkillsView() {
 
       {/* Detail Panel */}
       {selectedSkill && (
-        <SkillDetailPanel skill={selectedSkill} onClose={() => setSelectedSkill(null)} />
+        <SkillDetailPanel
+          skill={selectedSkill}
+          agents={agents}
+          onClose={() => setSelectedSkill(null)}
+          onInstall={handleInstall}
+          onUninstall={handleUninstall}
+        />
       )}
     </div>
   );

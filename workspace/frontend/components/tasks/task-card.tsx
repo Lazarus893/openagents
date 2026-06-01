@@ -115,6 +115,7 @@ export function TaskCard({ task, onStatusChange, onTaskUpdate }: TaskCardProps) 
 
   return (
     <div
+      data-task-id={task.id}
       className="group px-3 py-2.5 flex flex-col gap-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
       onClick={() => setExpanded((prev) => !prev)}
     >

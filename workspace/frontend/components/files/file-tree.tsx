@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronRight, Folder, Loader2, FolderOpen, Plus } from 'lucide-react';
+import { ChevronRight, Folder, Loader2, FolderOpen, Plus, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   isFileSystemAccessSupported,
@@ -278,17 +279,17 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
 
   // Knowledge sync: sync file changes to Knowledge entries
   const syncedRef = useRef(false);
-  useEffect(() => {
-    if (!tree || tree.type !== 'directory') return;
-    if (syncedRef.current) return;
-    syncedRef.current = true;
+  const [syncing, setSyncing] = useState(false);
 
-    const doSync = async () => {
+  const runSync = useCallback(
+    async (manual: boolean) => {
+      if (!tree || tree.type !== 'directory') return;
+      setSyncing(true);
+      const toastId = manual ? toast.loading('正在同步文件到知识库…') : undefined;
       try {
         const result = await syncFilesToKnowledge(
           tree,
           async (path) => {
-            // Try browser FS handle first, fallback to server API
             try {
               const handle = findHandleForPath(path);
               if (handle) {
@@ -301,18 +302,36 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
             const data = await res.json();
             return data.content || '';
           },
-          workspaceId
+          workspaceId,
         );
-        if (result.created > 0 || result.updated > 0) {
+        if (result.created > 0 || result.updated > 0 || result.removed > 0) {
           window.dispatchEvent(new CustomEvent('knowledge-synced', { detail: result }));
+        } else if (manual) {
+          toast.success('知识库已是最新', { id: toastId });
         }
-      } catch {
-        // Silent fail - sync is best-effort
+        // The 'knowledge-synced' listener (knowledge-view) shows the success toast
+        // for non-empty results; dismiss the loading toast quietly.
+        if (toastId && (result.created > 0 || result.updated > 0 || result.removed > 0)) {
+          toast.dismiss(toastId);
+        }
+      } catch (err) {
+        if (manual) {
+          toast.error(err instanceof Error ? err.message : '同步失败', { id: toastId });
+        }
+      } finally {
+        setSyncing(false);
       }
-    };
+    },
+    [tree, workspaceId],
+  );
 
-    doSync();
-  }, [tree, workspaceId]);
+  // Auto-sync on initial tree load
+  useEffect(() => {
+    if (!tree || tree.type !== 'directory') return;
+    if (syncedRef.current) return;
+    syncedRef.current = true;
+    runSync(false);
+  }, [tree, runSync]);
 
   // Filter tree nodes by search
   const filterTree = useCallback((node: FileNode, query: string): FileNode | null => {
@@ -391,6 +410,16 @@ export function FileTree({ onSelectFile, selectedPath }: FileTreeProps) {
           placeholder="筛选文件..."
           className="flex-1 text-xs px-2.5 py-1.5 rounded-md bg-muted/50 border border-input outline-none text-foreground placeholder:text-muted-foreground"
         />
+        {tree && tree.type === 'directory' && (
+          <button
+            onClick={() => runSync(true)}
+            disabled={syncing}
+            className="size-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-muted-foreground transition-colors shrink-0 disabled:opacity-50"
+            title="同步文件到知识库"
+          >
+            <RefreshCw className={cn('size-3.5', syncing && 'animate-spin')} />
+          </button>
+        )}
         {browserMode && (
           <button
             onClick={handlePickFolder}
