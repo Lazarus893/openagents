@@ -6,7 +6,7 @@ import { capture } from './analytics';
 import { useOpenAgentsAuth } from './openagents-auth-context';
 import { generateUserId, getStoredIdentity, storeIdentity } from './identity';
 import { networkAgentToWorkspaceAgent, networkChannelToSession } from './types';
-import type { BrowserPersistentContext, BrowserTab, DMConversation, KnowledgeEntry, NotificationItem, OnlineUser, RoutineItem, TodoItem, Workspace, WorkspaceAgent, WorkspaceFile, WorkspaceIdentity, WorkspaceSession } from './types';
+import type { ArtifactItem, BrowserPersistentContext, BrowserTab, DMConversation, KnowledgeEntry, NotificationItem, OnlineUser, RoutineItem, TodoItem, Workspace, WorkspaceAgent, WorkspaceFile, WorkspaceIdentity, WorkspaceSession } from './types';
 
 function useWorkspaceIdentity() {
   const { user } = useOpenAgentsAuth();
@@ -132,6 +132,9 @@ interface WorkspaceContextValue {
   dismissNotification: (id: string) => Promise<void>;
   notificationSound: boolean;
   setNotificationSound: (enabled: boolean) => void;
+  // Artifacts (unified product surface)
+  artifacts: ArtifactItem[];
+  refreshArtifacts: () => Promise<void>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -204,6 +207,7 @@ export function WorkspaceProvider({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [manuallyRenamedSessions, setManuallyRenamedSessions] = useState<Set<string>>(new Set());
+  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
 
   // Auto-select browser tabs for split browser view:
   // - On first load: select the most recently created agent tab (if any)
@@ -602,6 +606,8 @@ export function WorkspaceProvider({
         setNotifications(r.notifications);
         setUnreadNotificationCount(r.unreadCount);
       }).catch(() => {});
+      workspaceApi.listArtifacts().then((r) => setArtifacts(r.artifacts)).catch(() => {});
+      workspaceApi.listArtifacts().then((r) => setArtifacts(r.artifacts)).catch(() => {});
     } catch {
       // Non-critical — keep existing state
     }
@@ -632,6 +638,15 @@ export function WorkspaceProvider({
     try {
       const result = await workspaceApi.listRoutines();
       setRoutines(result.routines);
+    } catch {
+      // Non-critical
+    }
+  }, []);
+
+  const refreshArtifacts = useCallback(async () => {
+    try {
+      const result = await workspaceApi.listArtifacts();
+      setArtifacts(result.artifacts);
     } catch {
       // Non-critical
     }
@@ -830,6 +845,7 @@ export function WorkspaceProvider({
             setNotifications(r.notifications);
             setUnreadNotificationCount(r.unreadCount);
           }).catch(() => {}),
+          workspaceApi.listArtifacts().then((r) => setArtifacts(r.artifacts)).catch(() => {}),
         ]);
         if (cancelled) return;
 
@@ -1151,6 +1167,8 @@ export function WorkspaceProvider({
         dismissNotification,
         notificationSound,
         setNotificationSound,
+        artifacts,
+        refreshArtifacts,
       }}
     >
       {children}

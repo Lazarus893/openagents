@@ -5,6 +5,7 @@ import { KnowledgeActionCard, type KnowledgeActionMetadata } from './knowledge-a
 import { RoutineActionCard, type RoutineActionMetadata } from './routine-action-card';
 import { FileActionCard, type FileActionMetadata } from './file-action-card';
 import { ReviewActionCard, type ReviewActionMetadata } from './review-action-card';
+import { ArtifactActionCard } from './artifact-action-card';
 
 // ---------------------------------------------------------------------------
 // Union type for all supported action metadata
@@ -27,8 +28,22 @@ interface ActionCardRendererProps {
 }
 
 export function ActionCardRenderer({ metadata, onOpen }: ActionCardRendererProps) {
-  if (!metadata || !metadata.actionType) return null;
+  if (!metadata) return null;
 
+  // Auto-upgraded artifacts: persistence.py wrote `artifact_ids` array.
+  // One message can carry multiple artifacts — render each as a card.
+  const artifactIds = metadata.artifact_ids as string[] | undefined;
+  if (Array.isArray(artifactIds) && artifactIds.length > 0) {
+    return (
+      <div className="space-y-2">
+        {artifactIds.map((id) => (
+          <ArtifactActionCard key={id} artifactId={id} onOpen={onOpen} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!metadata.actionType) return null;
   const actionType = metadata.actionType as string;
 
   switch (actionType) {

@@ -59,6 +59,7 @@ class EventRecord(Base):
     metadata_ = Column("metadata", JSONB, default={})        # underscore to avoid Python keyword
     timestamp = Column(BigInteger, nullable=False)           # unix ms
     visibility = Column(Text, default="channel")
+    artifact_id = Column(Text, nullable=True)                 # primary artifact reference (when message emits one)
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
 
     __table_args__ = (
@@ -66,6 +67,7 @@ class EventRecord(Base):
         Index("idx_events_network_target", "network_id", "target"),
         Index("idx_events_network_timestamp", "network_id", "timestamp"),
         Index("idx_events_network_type_target_ts", "network_id", "type", "target", "timestamp"),
+        Index("idx_events_artifact_id", "artifact_id"),
     )
 
 
@@ -651,3 +653,70 @@ class Agent(Base):
     display_name = Column(Text, nullable=True)
     agent_type = Column(Text, nullable=True)         # "claude", "codex", "gemini", etc.
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+
+# ---------------------------------------------------------------------------
+# Artifacts — unified surface for products produced by agents/routines/tools.
+# ---------------------------------------------------------------------------
+
+class ArtifactRecord(Base):
+    """A first-class product (markdown / code / svg / mermaid / html / image / json / pdf).
+
+    Created either:
+    - manually via POST /v1/artifacts
+    - via Promote (knowledge / routine output → artifact)
+    - automatically when an agent message contains an `<artifact>` tag (parsed
+      by app/mods/persistence.py)
+
+    The same artifact can be:
+    - referenced from chat (events.artifact_id)
+    - shared via public link (share_token, reusing ShareSnapshot pattern)
+    - promoted to a knowledge entry (one-way, persisted in metadata.knowledge_entry_id)
+    - versioned (parent_id chain) when the same `id` is re-emitted
+    """
+    __tablename__ = "artifacts"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+
+    # Core
+    kind = Column(Text, nullable=False)                  # markdown|code|html|svg|mermaid|image|json|pdf
+    mime_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)                # 1-2 sentence card preview
+
+    # Content (one-of)
+    content = Column(Text, nullable=True)                # text-kind: stored inline
+    storage_key = Column(Text, nullable=True)            # binary kind: FileStore key
+    size_bytes = Column(Integer, default=0, server_default=text("0"))
+
+    # Type-specific metadata: code → {language}, image → {width, height},
+    # routine_summary → {metrics, lastFiredAt}
+    metadata_ = Column("metadata", JSONB, default=dict)
+
+    # Source back-reference (any-of)
+    source_kind = Column(Text, nullable=True)            # routine|chat|manual|tool|file_promotion|knowledge_promotion
+    source_id = Column(Text, nullable=True)              # corresponding row id in source table
+    source_event_id = Column(Text, nullable=True)        # back-ref to events table
+    source_channel = Column(Text, nullable=True)         # back-ref to chat thread name
+
+    # Collaboration / publishing
+    created_by = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+    share_token = Column(Text, unique=True, nullable=True)  # null = unpublished
+    pinned = Column(Boolean, default=False, server_default=text("FALSE"))
+    tags = Column(JSONB, default=list)                    # JSONB list of strings (cross-DB compat)
+    status = Column(Text, nullable=False, default="active")  # active | archived | deleted
+
+    # Versioning
+    version = Column(Integer, default=1, server_default=text("1"))
+    parent_id = Column(Text, nullable=True)               # previous version
+
+    __table_args__ = (
+        Index("idx_artifacts_ws_kind_created", "workspace_id", "kind", "created_at"),
+        Index("idx_artifacts_ws_status_created", "workspace_id", "status", "created_at"),
+        Index("idx_artifacts_source", "source_kind", "source_id"),
+        Index("idx_artifacts_source_event", "source_event_id"),
+        Index("idx_artifacts_parent", "parent_id"),
+    )

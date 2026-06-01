@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.config import config
 from app.database import SessionLocal
 from app.models import CloudAgentConfig, EventRecord, FileRecord, Workspace
+from app.services.agent_prompts import compose_system_prompt as _compose_system_prompt
 from app.services.cloud_providers import audio_generation, chat_completion, image_generation
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ async def _invoke_chat_agent(
         provider=cloud_config.provider,
         model=cloud_config.model,
         messages=messages,
-        system_prompt=cloud_config.system_prompt,
+        system_prompt=_compose_system_prompt(cloud_config.system_prompt),
         max_tokens=cloud_config.max_tokens,
         base_url=cloud_config.base_url,
     )

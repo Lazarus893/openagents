@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, RefreshCw, Trash2, Plus, BookTemplate, Pause, Play } from 'lucide-react';
+import { CalendarClock, RefreshCw, Trash2, Plus, BookTemplate, Pause, Play, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout } from '@/components/layout/layout-context';
@@ -60,7 +60,7 @@ function timeUntil(dateStr: string): string {
 }
 
 export function RoutinesView() {
-  const { routines, refreshRoutines, createRoutine, sessions, agents, setCurrentSessionId } = useWorkspace();
+  const { routines, refreshRoutines, createRoutine, sessions, agents, setCurrentSessionId, artifacts } = useWorkspace();
   const { setViewMode } = useLayout();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -248,6 +248,12 @@ export function RoutinesView() {
               const routineType = mockV2?.routineType || 'custom';
               const typeIcon = ROUTINE_TYPE_ICONS[routineType];
               const typeLabel = ROUTINE_TYPE_LABELS[routineType];
+              // Count artifacts produced by this routine (matched on source_channel)
+              const artifactCount = artifacts.filter(
+                (a) =>
+                  a.status !== 'deleted' &&
+                  a.sourceChannel === routine.channelName,
+              ).length;
 
               return (
                 <div
@@ -301,6 +307,27 @@ export function RoutinesView() {
                           <>
                             <span>·</span>
                             <span>last: {timeAgo(routine.lastFiredAt)}</span>
+                          </>
+                        )}
+                        {artifactCount > 0 && (
+                          <>
+                            <span>·</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewMode('artifacts');
+                                // Defer so the view-mode change settles before
+                                // the artifacts-view filter sync. We don't have
+                                // a "set source filter" event yet, so this just
+                                // navigates; users can find this routine's
+                                // artifacts via the source filter dropdown.
+                              }}
+                              className="inline-flex items-center gap-0.5 hover:text-violet-600 transition-colors"
+                              title={`${artifactCount} artifact${artifactCount === 1 ? '' : 's'} from this routine`}
+                            >
+                              <Package className="size-2.5" />
+                              {artifactCount}
+                            </button>
                           </>
                         )}
                       </div>

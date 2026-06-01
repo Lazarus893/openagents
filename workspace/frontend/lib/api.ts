@@ -1016,6 +1016,174 @@ class WorkspaceApi {
   }
 
   // ---------------------------------------------------------------------------
+  // Artifacts (unified product surface)
+  // ---------------------------------------------------------------------------
+
+  private _mapArtifact(raw: Record<string, unknown>): import('./types').ArtifactItem {
+    return {
+      id: raw.id as string,
+      workspaceId: (raw.workspace_id || '') as string,
+      kind: (raw.kind || 'markdown') as import('./types').ArtifactKind,
+      mimeType: (raw.mime_type || 'text/plain') as string,
+      title: (raw.title || '') as string,
+      summary: (raw.summary ?? null) as string | null,
+      content: (raw.content ?? undefined) as string | undefined,
+      hasStorageKey: Boolean(raw.has_storage_key),
+      sizeBytes: (raw.size_bytes || 0) as number,
+      metadata: ((raw.metadata as Record<string, unknown>) || {}),
+      sourceKind: (raw.source_kind ?? null) as string | null,
+      sourceId: (raw.source_id ?? null) as string | null,
+      sourceEventId: (raw.source_event_id ?? null) as string | null,
+      sourceChannel: (raw.source_channel ?? null) as string | null,
+      createdBy: (raw.created_by || '') as string,
+      createdAt: (raw.created_at ?? null) as string | null,
+      updatedAt: (raw.updated_at ?? null) as string | null,
+      shareToken: (raw.share_token ?? null) as string | null,
+      pinned: Boolean(raw.pinned),
+      tags: ((raw.tags as string[]) || []),
+      status: ((raw.status || 'active') as 'active' | 'archived' | 'deleted'),
+      version: (raw.version || 1) as number,
+      parentId: (raw.parent_id ?? null) as string | null,
+    };
+  }
+
+  async listArtifacts(opts?: {
+    kind?: string;
+    sourceKind?: string;
+    sourceId?: string;
+    sourceChannel?: string;
+    status?: string;
+    pinned?: boolean;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ artifacts: import('./types').ArtifactItem[]; limit: number; offset: number }> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    if (opts?.kind) params.set('kind', opts.kind);
+    if (opts?.sourceKind) params.set('source_kind', opts.sourceKind);
+    if (opts?.sourceId) params.set('source_id', opts.sourceId);
+    if (opts?.sourceChannel) params.set('source_channel', opts.sourceChannel);
+    if (opts?.status) params.set('status', opts.status);
+    if (opts?.pinned !== undefined) params.set('pinned', String(opts.pinned));
+    if (opts?.q) params.set('q', opts.q);
+    if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+    const raw = await this.request<{ artifacts: Record<string, unknown>[]; limit: number; offset: number }>(
+      `/v1/artifacts?${params}`,
+    );
+    return {
+      artifacts: (raw.artifacts || []).map((r) => this._mapArtifact(r)),
+      limit: raw.limit ?? 50,
+      offset: raw.offset ?? 0,
+    };
+  }
+
+  async getArtifact(artifactId: string): Promise<import('./types').ArtifactItem> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    const raw = await this.request<Record<string, unknown>>(`/v1/artifacts/${artifactId}?${params}`);
+    return this._mapArtifact(raw);
+  }
+
+  async createArtifact(params: {
+    kind: import('./types').ArtifactKind;
+    title: string;
+    content?: string;
+    storageKey?: string;
+    summary?: string;
+    mimeType?: string;
+    metadata?: Record<string, unknown>;
+    tags?: string[];
+    sourceKind?: string;
+    sourceId?: string;
+    sourceEventId?: string;
+    sourceChannel?: string;
+    createdBy?: string;
+  }): Promise<import('./types').ArtifactItem> {
+    const raw = await this.request<Record<string, unknown>>('/v1/artifacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        network: this.workspaceId,
+        kind: params.kind,
+        title: params.title,
+        content: params.content,
+        storage_key: params.storageKey,
+        summary: params.summary,
+        mime_type: params.mimeType,
+        metadata: params.metadata,
+        tags: params.tags,
+        source_kind: params.sourceKind,
+        source_id: params.sourceId,
+        source_event_id: params.sourceEventId,
+        source_channel: params.sourceChannel,
+        created_by: params.createdBy,
+      }),
+    });
+    return this._mapArtifact(raw);
+  }
+
+  async updateArtifact(artifactId: string, params: {
+    title?: string;
+    summary?: string;
+    content?: string;
+    metadata?: Record<string, unknown>;
+    tags?: string[];
+    pinned?: boolean;
+    status?: 'active' | 'archived';
+  }): Promise<import('./types').ArtifactItem> {
+    const raw = await this.request<Record<string, unknown>>(`/v1/artifacts/${artifactId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        network: this.workspaceId,
+        ...params,
+      }),
+    });
+    return this._mapArtifact(raw);
+  }
+
+  async deleteArtifact(artifactId: string): Promise<void> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    await this.request<unknown>(`/v1/artifacts/${artifactId}?${params}`, { method: 'DELETE' });
+  }
+
+  async shareArtifact(artifactId: string): Promise<{ id: string; shareToken: string }> {
+    const raw = await this.request<{ id: string; share_token: string }>(`/v1/artifacts/${artifactId}/share`, {
+      method: 'POST',
+      body: JSON.stringify({ network: this.workspaceId }),
+    });
+    return { id: raw.id, shareToken: raw.share_token };
+  }
+
+  async unshareArtifact(artifactId: string): Promise<void> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    await this.request<unknown>(`/v1/artifacts/${artifactId}/share?${params}`, { method: 'DELETE' });
+  }
+
+  async promoteArtifactToKnowledge(artifactId: string, params?: {
+    title?: string;
+    description?: string;
+  }): Promise<{ artifactId: string; knowledgeEntryId: string; slug: string; title: string }> {
+    const raw = await this.request<{
+      artifact_id: string;
+      knowledge_entry_id: string;
+      slug: string;
+      title: string;
+    }>(`/v1/artifacts/${artifactId}/promote-to-knowledge`, {
+      method: 'POST',
+      body: JSON.stringify({
+        network: this.workspaceId,
+        title: params?.title,
+        description: params?.description,
+      }),
+    });
+    return {
+      artifactId: raw.artifact_id,
+      knowledgeEntryId: raw.knowledge_entry_id,
+      slug: raw.slug,
+      title: raw.title,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Notifications / Inbox
   // ---------------------------------------------------------------------------
 

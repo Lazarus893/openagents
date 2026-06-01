@@ -219,6 +219,49 @@ export interface RoutineItem {
 }
 
 // ---------------------------------------------------------------------------
+// Artifacts (unified product surface)
+// ---------------------------------------------------------------------------
+
+export type ArtifactKind =
+  | 'markdown'
+  | 'code'
+  | 'html'
+  | 'svg'
+  | 'mermaid'
+  | 'image'
+  | 'json'
+  | 'pdf';
+
+export interface ArtifactItem {
+  id: string;
+  workspaceId: string;
+  kind: ArtifactKind;
+  mimeType: string;
+  title: string;
+  summary: string | null;
+  /** Inline text content. Absent on list endpoint to keep payload light. */
+  content?: string | null;
+  hasStorageKey: boolean;
+  sizeBytes: number;
+  metadata: Record<string, unknown>;
+  // Source back-reference
+  sourceKind: string | null;
+  sourceId: string | null;
+  sourceEventId: string | null;
+  sourceChannel: string | null;
+  // Collab + publishing
+  createdBy: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  shareToken: string | null;
+  pinned: boolean;
+  tags: string[];
+  status: 'active' | 'archived' | 'deleted';
+  version: number;
+  parentId: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Inbox / Notifications
 // ---------------------------------------------------------------------------
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Plus, MessageSquare, FileText, Globe, PlusSquare, Sparkles, BookOpen,
-  Settings, Copy, Check, ListTodo, CalendarClock, Inbox,
+  Settings, Copy, Check, ListTodo, CalendarClock, Inbox, Package,
   LogIn, LogOut, Shield, Moon, Sun, KeyRound, X, Crown, Users, FolderOpen,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -75,7 +75,7 @@ function NavButton({
 
 export function SidebarContent() {
   const { isSidebarOpen, sidebarToggle, viewMode, setViewMode, setSelectedAgentName } = useLayout();
-  const { agents, sessions, files, browserTabs, createSession, workspace, token, refreshWorkspace, todos, routines, knowledge, currentUser, onlineUsers, unreadNotificationCount, currentSessionId, setCurrentSessionId } = useWorkspace();
+  const { agents, sessions, files, browserTabs, createSession, workspace, token, refreshWorkspace, todos, routines, knowledge, artifacts, currentUser, onlineUsers, unreadNotificationCount, currentSessionId, setCurrentSessionId } = useWorkspace();
   const { user, isOpenAgentsDomain, signIn, signOut } = useOpenAgentsAuth();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -311,6 +311,7 @@ export function SidebarContent() {
                 <NavButton active={viewMode === 'tasks'} icon={<ListTodo className="size-[15px]" />} label="Tasks" count={todos.filter((t) => t.status === 'pending' || t.status === 'in_progress').length} onClick={() => setViewMode('tasks')} />
                 <NavButton active={viewMode === 'routines'} icon={<CalendarClock className="size-[15px]" />} label="Routines" count={routines.filter((r) => r.status === 'active').length} onClick={() => setViewMode('routines')} />
                 <NavButton active={viewMode === 'inbox'} icon={<Inbox className="size-[15px]" />} label="Inbox" count={unreadNotificationCount > 0 ? unreadNotificationCount : undefined} onClick={() => setViewMode('inbox')} />
+                <NavButton active={viewMode === 'artifacts'} icon={<Package className="size-[15px]" />} label="Artifacts" count={artifacts.filter((a) => a.status !== 'deleted').length || undefined} onClick={() => setViewMode('artifacts')} />
                 <NavButton active={viewMode === 'skills'} icon={<Sparkles className="size-[15px]" />} label="Skill Hub" onClick={() => setViewMode('skills')} />
               </div>
             </div>

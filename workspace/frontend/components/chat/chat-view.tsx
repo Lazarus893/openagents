@@ -120,6 +120,9 @@ export function ChatView() {
     } else if (entity.type === 'file') {
       setViewMode('files');
       window.dispatchEvent(new CustomEvent('open-file', { detail: { id: entity.id } }));
+    } else if (entity.type === 'artifact') {
+      setViewMode('artifacts');
+      window.dispatchEvent(new CustomEvent('open-artifact', { detail: { id: entity.id } }));
     } else {
       toast(`Open the ${entity.type} panel to see this`);
     }
