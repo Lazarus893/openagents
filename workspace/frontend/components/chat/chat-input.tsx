@@ -514,6 +514,7 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
       )}
 
       <div className={cn(
+        'rounded-2xl border border-input bg-background px-3 pt-2 pb-1.5 space-y-1.5',
         isDragging && 'border-primary border-dashed bg-primary/5',
         isFocused && !isDragging && 'ring-2 ring-primary/30 border-primary/40'
       )}>
@@ -637,19 +638,19 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
             rows={1}
             disabled={disabled}
             data-chat-input
-            className="w-full border-0 bg-transparent shadow-none focus:outline-none placeholder:text-muted-foreground h-auto px-0 text-sm py-2 resize-none"
+            className="w-full border-0 bg-transparent shadow-none focus:outline-none placeholder:text-muted-foreground h-auto px-0 pr-7 text-sm py-1 resize-none"
           />
           {/* Shortcut hint: always show 'esc' when focused, show 'i' when not focused and empty */}
           {isFocused ? (
             <kbd
-              className="pointer-events-none absolute right-1 top-2.5 flex items-center justify-center rounded text-[9px] font-mono font-medium bg-muted text-muted-foreground border border-input h-4 px-1"
+              className="pointer-events-none absolute right-0 top-1.5 flex items-center justify-center rounded text-[9px] font-mono font-medium bg-muted text-muted-foreground border border-input h-4 px-1"
               title="Press Esc to exit typing mode"
             >
               esc
             </kbd>
           ) : !message && (
             <kbd
-              className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-[9px] font-mono font-medium bg-muted text-muted-foreground border border-input size-4"
+              className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-[9px] font-mono font-medium bg-muted text-muted-foreground border border-input size-4"
               title="Press any key to start typing"
             >
               i
