@@ -4,18 +4,23 @@
  * Why this exists:
  *   The server route /api/skills/local can only read disk in dev — on Vercel
  *   it returns 404. To still surface the user's real skill catalog from a
- *   deployed build, we ask the user once to grant directory access (e.g.
- *   `~/.claude/skills`) via `window.showDirectoryPicker()`. The handle is
- *   persisted to IndexedDB so subsequent visits skip the picker.
+ *   deployed build, we ask the user once to grant directory access via
+ *   `window.showDirectoryPicker()`.
  *
- *   Permission state still has to be re-verified on every page load (browser
- *   security model — we cannot silently re-read a granted directory across
- *   sessions without `queryPermission`/`requestPermission`).
+ *   Because the user often doesn't know which exact directory to point at
+ *   (`~/.claude/skills`? `~/.codex/skills`?), the picker is intentionally
+ *   forgiving: pick anything reasonable (your home, ~/.claude, Documents,
+ *   even ~/.claude/skills itself) and we'll **recursively discover** every
+ *   `skills/` directory under it and union the contents.
+ *
+ *   The chosen handle is persisted to IndexedDB so subsequent visits skip
+ *   the picker; permission still has to be re-granted on every page load
+ *   (browser security model).
  *
  * Browser support:
  *   - Chromium / Edge: full support
- *   - Safari / Firefox: showDirectoryPicker is undefined -> we degrade
- *     gracefully and the UI falls back to "browse readonly catalog" mode.
+ *   - Safari / Firefox: showDirectoryPicker is undefined -> caller falls
+ *     back to a "use a Chromium browser or local dev server" UI.
  */
 
 import type { LocalSkill } from './api-skills';
@@ -128,13 +133,144 @@ export async function pickAndStoreSkillsDir(): Promise<FileSystemDirectoryHandle
 }
 
 // ---------------------------------------------------------------------------
-// Skill walking + parsing
+// Auto-discovery: find every plausible skills directory inside a chosen root
+// ---------------------------------------------------------------------------
+
+/**
+ * Hidden directories (dot-prefixed) we still want to descend into because
+ * they commonly contain agent skill catalogs. Anything else hidden (`.git`,
+ * `.cache`, `.Trash`, …) is skipped to avoid huge useless scans.
+ */
+const HIDDEN_AGENT_ROOTS = new Set([
+  '.claude',
+  '.codex',
+  '.openclaw',
+  '.aider',
+  '.openagents',
+  '.cursor',
+  '.continue',
+  '.agents',
+]);
+
+/**
+ * Directories we never descend into. Most are large, irrelevant, or would
+ * trigger "this folder contains system files" warnings.
+ */
+const SKIP_NAMES = new Set([
+  'node_modules',
+  'Library',
+  'Pictures',
+  'Movies',
+  'Music',
+  'Applications',
+  'Public',
+  'Sites',
+  '.git',
+  '.cache',
+  '.npm',
+  '.yarn',
+  '.Trash',
+  'venv',
+  '.venv',
+  '__pycache__',
+  '.next',
+  'dist',
+  'build',
+  '.pnpm',
+]);
+
+/** Quick "does this dir look like a skills container?" check. Counts a child
+ *  directory as a skill if it has a SKILL.md, or counts a child .md file
+ *  as a flat-style skill. We only need a couple of hits to feel confident. */
+async function looksLikeSkillsDir(dir: FileSystemDirectoryHandle): Promise<boolean> {
+  let hits = 0;
+  try {
+    for await (const entry of (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
+      if (hits >= 2) return true;
+      if (entry.name.startsWith('.')) continue;
+      if (entry.kind === 'directory') {
+        const sub = entry as FileSystemDirectoryHandle;
+        const skillMd = await sub.getFileHandle('SKILL.md').catch(() => null);
+        if (skillMd) hits++;
+      } else if (entry.kind === 'file' && entry.name.endsWith('.md') && entry.name !== 'README.md') {
+        hits++;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return hits >= 1;
+}
+
+/**
+ * Recursively find every directory named `skills` (or any directory that
+ * contains skill-shaped children) under `root`. Returns up to ~6 roots.
+ *
+ *   ~/.claude/skills/   → returned as-is (root.name === 'skills')
+ *   ~/.claude/          → finds .claude/skills
+ *   ~/                  → finds .claude/skills, .codex/skills, …
+ *   ~/Documents/x/      → finds nothing → caller renders "no skills found"
+ */
+export async function discoverSkillsRoots(
+  root: FileSystemDirectoryHandle,
+): Promise<{ handle: FileSystemDirectoryHandle; path: string }[]> {
+  const found: { handle: FileSystemDirectoryHandle; path: string }[] = [];
+  const seenNames = new Set<string>();
+
+  async function walk(dir: FileSystemDirectoryHandle, relPath: string, depth: number) {
+    if (found.length >= 8) return;
+    if (depth > 3) return;
+
+    // If this dir IS a skills container, record it and stop descending — its
+    // children are individual skills, not nested skill catalogs.
+    const isSkillsDir =
+      dir.name === 'skills' ||
+      (depth > 0 && (await looksLikeSkillsDir(dir)));
+    if (isSkillsDir) {
+      const key = relPath || dir.name;
+      if (!seenNames.has(key)) {
+        seenNames.add(key);
+        found.push({ handle: dir, path: relPath || dir.name });
+      }
+      return;
+    }
+
+    // Otherwise, descend into a curated set of children. Avoid scanning
+    // every dot-folder under home (would be slow + scary).
+    let entries: FileSystemHandle[];
+    try {
+      entries = [];
+      for await (const entry of (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
+        entries.push(entry);
+      }
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.kind !== 'directory') continue;
+      if (SKIP_NAMES.has(entry.name)) continue;
+
+      // Hidden dirs: only descend into the agent-root whitelist
+      if (entry.name.startsWith('.') && !HIDDEN_AGENT_ROOTS.has(entry.name)) continue;
+
+      const childPath = relPath ? `${relPath}/${entry.name}` : entry.name;
+      await walk(entry as FileSystemDirectoryHandle, childPath, depth + 1);
+      if (found.length >= 8) return;
+    }
+  }
+
+  await walk(root, root.name, 0);
+  return found;
+}
+
+// ---------------------------------------------------------------------------
+// Skill walking + parsing (per-skills-dir leaf reader)
 // ---------------------------------------------------------------------------
 
 /** Strip the YAML/Markdown front-matter and grab the first descriptive line. */
 function extractSkillSummary(md: string): string {
   let body = md;
-  // Strip --- front-matter ---
   if (body.startsWith('---')) {
     const end = body.indexOf('\n---', 3);
     if (end !== -1) body = body.slice(end + 4);
@@ -157,12 +293,10 @@ function formatName(slug: string): string {
 }
 
 /**
- * Walk the chosen directory and turn each immediate child into a LocalSkill.
- * - Subdirectories: read SKILL.md inside if present.
- * - Loose .md files: treat the file itself as the skill (description = first line).
- *
- * Hidden entries (starting with `.`) are skipped — they're rarely intended skills
- * and `~/.claude/skills/.system` is more clutter than signal.
+ * Read every skill inside ONE skills-shaped directory.
+ *   - Subdirectories: SKILL.md inside if present, slug = dir name.
+ *   - Loose .md files: file is the skill, slug = basename.
+ *   - Hidden entries skipped.
  */
 export async function readSkillsFromHandle(
   handle: FileSystemDirectoryHandle,
@@ -172,8 +306,7 @@ export async function readSkillsFromHandle(
   const catalog: Record<string, SkillCatalogEntry> = SKILL_CATALOG;
   const uncategorized = UNCATEGORIZED_DEFAULTS;
 
-  // @ts-expect-error — values() exists at runtime on FileSystemDirectoryHandle
-  for await (const entry of handle.values() as AsyncIterable<FileSystemHandle>) {
+  for await (const entry of (handle as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()) {
     if (entry.name.startsWith('.')) continue;
 
     let slug = entry.name;
@@ -190,7 +323,7 @@ export async function readSkillsFromHandle(
           description = extractSkillSummary(text);
         }
       } catch {
-        // Some symlinks / permission-denied entries fail here — just skip parsing.
+        // Broken symlinks / permission-denied — skip parsing, keep entry.
       }
     } else if (entry.kind === 'file' && entry.name.endsWith('.md')) {
       slug = entry.name.replace(/\.md$/, '');
@@ -219,22 +352,74 @@ export async function readSkillsFromHandle(
     });
   }
 
-  // Stable alphabetical order so the UI doesn't reshuffle on every reload.
   skills.sort((a, b) => a.slug.localeCompare(b.slug));
   return skills;
 }
 
+// ---------------------------------------------------------------------------
+// High-level: discover all skills under any chosen root
+// ---------------------------------------------------------------------------
+
+export interface DiscoverResult {
+  skills: LocalSkill[];
+  /** Pretty-printed source roots that were actually scanned. Useful for UX. */
+  rootsScanned: string[];
+}
+
 /**
- * High-level convenience: try to load skills from a previously-authorized
- * handle. Returns null if there is no stored handle or permission was lost
- * (caller can decide whether to prompt).
+ * Run discoverSkillsRoots + readSkillsFromHandle for each match, dedupe by
+ * slug (first-seen wins), and tag each skill with the relative path it was
+ * found at so the UI can show "from .claude/skills".
  */
-export async function loadSkillsFromStoredHandle(): Promise<LocalSkill[] | null> {
+export async function discoverAndReadSkills(
+  root: FileSystemDirectoryHandle,
+): Promise<DiscoverResult> {
+  const roots = await discoverSkillsRoots(root);
+
+  // If the user picked a directory that itself looks like a skills dir but
+  // discoverSkillsRoots didn't add it (e.g. user picked exactly `skills/`),
+  // make sure we still scan it.
+  if (roots.length === 0 && (root.name === 'skills' || (await looksLikeSkillsDir(root)))) {
+    roots.push({ handle: root, path: root.name });
+  }
+
+  const out: LocalSkill[] = [];
+  const seen = new Set<string>();
+  const scannedLabels: string[] = [];
+
+  for (const r of roots) {
+    const label = r.path;
+    scannedLabels.push(label);
+    const skills = await readSkillsFromHandle(r.handle, label);
+    for (const s of skills) {
+      if (seen.has(s.slug)) continue;
+      seen.add(s.slug);
+      out.push(s);
+    }
+  }
+
+  out.sort((a, b) => a.slug.localeCompare(b.slug));
+  return { skills: out, rootsScanned: scannedLabels };
+}
+
+/** Convenience: pick a directory, discover, return everything. */
+export async function pickAndDiscoverSkills(): Promise<DiscoverResult & { handle: FileSystemDirectoryHandle }> {
+  const handle = await pickAndStoreSkillsDir();
+  const result = await discoverAndReadSkills(handle);
+  return { ...result, handle };
+}
+
+/**
+ * Try silently re-using a previously authorized handle. Returns null if we
+ * have nothing stored or permission is no longer granted (caller decides
+ * whether to prompt for re-auth).
+ */
+export async function loadSkillsFromStoredHandle(): Promise<DiscoverResult | null> {
   const handle = await getStoredHandle();
   if (!handle) return null;
   const ok = await ensureReadPermission(handle, false);
   if (!ok) return null;
-  return readSkillsFromHandle(handle, handle.name);
+  return discoverAndReadSkills(handle);
 }
 
 /** Re-prompt for permission on an existing handle (button-driven). */

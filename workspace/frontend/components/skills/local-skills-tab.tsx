@@ -9,7 +9,7 @@ import {
   getStoredHandle,
   pickAndStoreSkillsDir,
   loadSkillsFromStoredHandle,
-  readSkillsFromHandle,
+  discoverAndReadSkills,
   reauthorizeStoredHandle,
   clearStoredHandle,
 } from '@/lib/local-skills-fs';
@@ -101,25 +101,23 @@ function AuthorizeGate({ reason, onAuthorize, busy, errorMsg }: AuthorizeGatePro
       <div className="size-12 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
         <Lock className="size-5 text-primary" />
       </div>
-      <h3 className="text-base font-semibold mb-2">授权访问本地 Skills</h3>
+      <h3 className="text-base font-semibold mb-2">允许读取本地 Skills</h3>
       <p className="text-sm text-muted-foreground leading-relaxed mb-5">
         {reason === 'unsupported' ? (
           <>
-            当前浏览器不支持 File System Access API。请用 <span className="font-medium">Chrome / Edge / Arc</span>{' '}
-            等 Chromium 浏览器打开,或在本地启动 dev server。
-          </>
-        ) : reason === 'server-empty' ? (
-          <>
-            未在服务端找到本地 skill 目录。点击下方按钮选择你的 skills 目录(例如{' '}
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">~/.claude/skills</code>)。
+            当前浏览器不支持 File System Access API。请用{' '}
+            <span className="font-medium">Chrome / Edge / Arc</span> 等 Chromium 浏览器打开,
+            或在本地启动 dev server。
           </>
         ) : (
           <>
-            点击下方按钮选择你的 skills 根目录(通常是{' '}
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">~/.claude/skills</code>)。
-            授权后我们会在浏览器内读取每个子目录的{' '}
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">SKILL.md</code> 并展示。
-            目录句柄保存在 IndexedDB,下次打开会自动尝试读取。
+            为了从浏览器读到本地 skill 目录,需要你<b>授权一次</b>。点击下方按钮,
+            浏览器会弹出文件夹选择器 — 直接选你的{' '}
+            <code className="font-mono text-[11px] bg-muted px-1 rounded">home</code> 目录就行,
+            系统会<b>自动扫描</b>里面所有 <code className="font-mono text-[11px] bg-muted px-1 rounded">.claude/skills</code>、
+            <code className="font-mono text-[11px] bg-muted px-1 rounded">.codex/skills</code>、
+            <code className="font-mono text-[11px] bg-muted px-1 rounded">.openclaw/skills</code> 等目录。
+            授权后下次自动恢复,无需重选。
           </>
         )}
       </p>
@@ -134,20 +132,21 @@ function AuthorizeGate({ reason, onAuthorize, busy, errorMsg }: AuthorizeGatePro
       >
         {busy ? (
           <>
-            <RefreshCw className="size-4 animate-spin" /> 读取中…
+            <RefreshCw className="size-4 animate-spin" /> 扫描中…
           </>
         ) : (
           <>
-            <FolderOpen className="size-4" /> 选择 skills 目录
+            <FolderOpen className="size-4" /> 授权并自动扫描
           </>
         )}
       </button>
       {errorMsg && (
         <p className="text-[11px] text-destructive mt-3">{errorMsg}</p>
       )}
-      <p className="text-[10px] text-muted-foreground/70 mt-4 leading-relaxed">
-        授权仅授予浏览器只读权限。可以随时在 Chrome 设置 → 站点权限里撤销。
-      </p>
+      <div className="mt-5 text-[10px] text-muted-foreground/70 leading-relaxed space-y-1">
+        <p>选哪个文件夹都行 — 系统会递归找所有 <code className="font-mono">skills/</code> 子目录。</p>
+        <p>仅授予浏览器只读权限,可在 Chrome 设置 → 站点权限里随时撤销。</p>
+      </div>
     </div>
   );
 }
@@ -195,9 +194,9 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
     // Step 2: stored handle (silent, no prompt)
     if (isFsAccessSupported()) {
       try {
-        const fsSkills = await loadSkillsFromStoredHandle();
-        if (fsSkills && fsSkills.length > 0) {
-          setSkills(fsSkills);
+        const fsResult = await loadSkillsFromStoredHandle();
+        if (fsResult && fsResult.skills.length > 0) {
+          setSkills(fsResult.skills);
           setLoadState('ready');
           return;
         }
@@ -232,8 +231,15 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
       if (!handle) {
         handle = await pickAndStoreSkillsDir();
       }
-      const next = await readSkillsFromHandle(handle, handle.name);
-      setSkills(next);
+      const result = await discoverAndReadSkills(handle);
+      if (result.skills.length === 0) {
+        setAuthError(
+          '在所选目录里没找到 skill 文件。请重选一个包含 .claude/skills 或类似目录的父文件夹(比如你的 home 目录)。',
+        );
+        await clearStoredHandle();
+        return;
+      }
+      setSkills(result.skills);
       setLoadState('ready');
       setNeedsReauth(false);
     } catch (err) {
