@@ -1,17 +1,17 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, FolderOpen, Download, Lock, RefreshCw } from 'lucide-react';
+import { Search, FolderOpen, Download, Lock, RefreshCw, Plus, X, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fetchLocalSkills, type LocalSkill } from '@/lib/api-skills';
 import {
   isFsAccessSupported,
-  getStoredHandle,
-  pickAndStoreSkillsDir,
-  loadSkillsFromStoredHandle,
-  discoverAndReadSkills,
-  reauthorizeStoredHandle,
-  clearStoredHandle,
+  listAuthorizedSources,
+  addAuthorizedSource,
+  removeAuthorizedSource,
+  loadSkillsFromAllSources,
+  reauthorizeSource,
+  clearAllAuthorizedSources,
 } from '@/lib/local-skills-fs';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +31,18 @@ const LOCAL_CATEGORIES = [
   { id: 'Engineering Practices', label: 'Engineering', icon: '🛠️' },
   { id: 'Life & Productivity', label: 'Life', icon: '🏠' },
   { id: 'System & CLI', label: 'System & CLI', icon: '🔧' },
+];
+
+// Common skill paths — these are hints shown to the user, not auto-resolvable.
+// The picker can't navigate to them programmatically (browser security), but
+// users can paste them via Cmd+Shift+G in the file dialog on macOS.
+const SUGGESTED_PATHS = [
+  { path: '~/.claude', desc: 'Claude Code (~150 skills)' },
+  { path: '~/.openclaw', desc: 'OpenClaw (~100)' },
+  { path: '~/.codex', desc: 'Codex' },
+  { path: '~/.cursor', desc: 'Cursor IDE' },
+  { path: '~/.continue', desc: 'Continue' },
+  { path: '~/.gemini', desc: 'Gemini' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -83,70 +95,157 @@ function LocalSkillCard({ skill, onSelect }: { skill: LocalSkill; onSelect: (s: 
 }
 
 // ---------------------------------------------------------------------------
-// Authorization gate (shown when no skills are visible and FS Access is needed)
+// Empty / first-time auth gate
 // ---------------------------------------------------------------------------
 
 interface AuthorizeGateProps {
-  reason: 'no-permission' | 'unsupported' | 'server-empty';
-  onAuthorize: () => void;
+  onAddSource: () => void;
   busy: boolean;
   errorMsg: string | null;
+  unsupported: boolean;
 }
 
-function AuthorizeGate({ reason, onAuthorize, busy, errorMsg }: AuthorizeGateProps) {
-  const supported = isFsAccessSupported();
-
+function AuthorizeGate({ onAddSource, busy, errorMsg, unsupported }: AuthorizeGateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-6 text-center max-w-md mx-auto">
+    <div className="flex flex-col items-center justify-center py-10 px-6 text-center max-w-xl mx-auto">
       <div className="size-12 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
         <Lock className="size-5 text-primary" />
       </div>
-      <h3 className="text-base font-semibold mb-2">允许读取本地 Skills</h3>
+      <h3 className="text-base font-semibold mb-2">连接你的本地 Skills</h3>
       <p className="text-sm text-muted-foreground leading-relaxed mb-5">
-        {reason === 'unsupported' ? (
+        {unsupported ? (
           <>
-            当前浏览器不支持 File System Access API。请用{' '}
-            <span className="font-medium">Chrome / Edge / Arc</span> 等 Chromium 浏览器打开,
-            或在本地启动 dev server。
+            当前浏览器不支持 File System Access API。请使用{' '}
+            <span className="font-medium">Chrome / Edge / Arc</span> 等 Chromium 浏览器。
           </>
         ) : (
           <>
-            为了从浏览器读到本地 skill 目录,需要你<b>授权一次</b>。点击下方按钮,
-            浏览器会弹出文件夹选择器 — 直接选你的{' '}
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">home</code> 目录就行,
-            系统会<b>自动扫描</b>里面所有 <code className="font-mono text-[11px] bg-muted px-1 rounded">.claude/skills</code>、
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">.codex/skills</code>、
-            <code className="font-mono text-[11px] bg-muted px-1 rounded">.openclaw/skills</code> 等目录。
-            授权后下次自动恢复,无需重选。
+            浏览器不允许直接选 home 目录(会弹"包含系统文件"警告)。
+            <b>建议每次选一个 agent 目录</b>(下方常见路径),
+            授权后会自动扫描里面的 skills 并永久记住,可以再加更多目录。
           </>
         )}
       </p>
+
+      {!unsupported && (
+        <>
+          <div className="w-full mb-5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 text-left">
+              常见 skill 目录
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-left">
+              {SUGGESTED_PATHS.map((p) => (
+                <div
+                  key={p.path}
+                  className="rounded-lg border border-border bg-muted/30 px-2.5 py-2"
+                >
+                  <code className="text-[11px] font-mono text-foreground block">{p.path}</code>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{p.desc}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 mt-2 text-left">
+              💡 文件夹选择器里按 <kbd className="font-mono bg-muted px-1 rounded">⌘⇧G</kbd> 可以输入路径,
+              或者从 Finder 拖一个文件夹到选择器。
+            </p>
+          </div>
+
+          <button
+            onClick={onAddSource}
+            disabled={busy}
+            className={cn(
+              'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all',
+              'bg-primary text-primary-foreground hover:bg-primary/90',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+            )}
+          >
+            {busy ? (
+              <>
+                <RefreshCw className="size-4 animate-spin" /> 扫描中…
+              </>
+            ) : (
+              <>
+                <FolderOpen className="size-4" /> 添加 skill 目录
+              </>
+            )}
+          </button>
+        </>
+      )}
+
+      {errorMsg && (
+        <p className="text-[11px] text-destructive mt-3 max-w-md">{errorMsg}</p>
+      )}
+      <p className="text-[10px] text-muted-foreground/70 mt-5 leading-relaxed">
+        授权仅授予浏览器只读权限,可在 Chrome 设置 → 站点权限里随时撤销。
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Source chip bar (shown above grid when there are authorized sources)
+// ---------------------------------------------------------------------------
+
+interface SourceBarProps {
+  sources: string[];
+  staleSources: string[];
+  onAdd: () => void;
+  onRemove: (name: string) => void;
+  onReauth: (name: string) => void;
+  busy: boolean;
+}
+
+function SourceBar({ sources, staleSources, onAdd, onRemove, onReauth, busy }: SourceBarProps) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mr-1">
+        来源:
+      </span>
+      {sources.map((name) => {
+        const stale = staleSources.includes(name);
+        return (
+          <span
+            key={name}
+            className={cn(
+              'inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium',
+              stale
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                : 'bg-muted text-foreground',
+            )}
+            title={stale ? '权限已失效,点击重新授权' : `~/${name}`}
+          >
+            {stale && <AlertTriangle className="size-2.5" />}
+            <code className="font-mono">~/{name}</code>
+            {stale ? (
+              <button
+                onClick={() => onReauth(name)}
+                className="ml-0.5 px-1 hover:bg-amber-500/20 rounded text-[9px]"
+              >
+                重授权
+              </button>
+            ) : null}
+            <button
+              onClick={() => onRemove(name)}
+              className="ml-0.5 hover:bg-foreground/10 rounded p-0.5"
+              title="移除此来源"
+            >
+              <X className="size-2.5" />
+            </button>
+          </span>
+        );
+      })}
       <button
-        onClick={onAuthorize}
-        disabled={busy || !supported}
+        onClick={onAdd}
+        disabled={busy}
         className={cn(
-          'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
-          'bg-primary text-primary-foreground hover:bg-primary/90',
+          'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors',
+          'border border-dashed border-input hover:border-primary/40 hover:text-primary',
           'disabled:opacity-50 disabled:cursor-not-allowed',
         )}
       >
-        {busy ? (
-          <>
-            <RefreshCw className="size-4 animate-spin" /> 扫描中…
-          </>
-        ) : (
-          <>
-            <FolderOpen className="size-4" /> 授权并自动扫描
-          </>
-        )}
+        <Plus className="size-2.5" />
+        添加目录
       </button>
-      {errorMsg && (
-        <p className="text-[11px] text-destructive mt-3">{errorMsg}</p>
-      )}
-      <div className="mt-5 text-[10px] text-muted-foreground/70 leading-relaxed space-y-1">
-        <p>选哪个文件夹都行 — 系统会递归找所有 <code className="font-mono">skills/</code> 子目录。</p>
-        <p>仅授予浏览器只读权限,可在 Chrome 设置 → 站点权限里随时撤销。</p>
-      </div>
     </div>
   );
 }
@@ -168,47 +267,48 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
   const [activeCategory, setActiveCategory] = useState('all');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [needsReauth, setNeedsReauth] = useState(false);
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [staleSources, setStaleSources] = useState<string[]>([]);
 
   // Load order:
   //   1. server route (works in dev) -> if non-empty, done.
-  //   2. previously-authorized FS handle (IndexedDB) -> if permission still
-  //      granted, read and done.
-  //   3. show authorize gate so user can pick a directory.
+  //   2. authorized FS sources -> silent re-read; show chip list w/ stale badges.
+  //   3. show first-time auth gate.
   const loadAll = useCallback(async () => {
     setLoadState('loading');
     setAuthError(null);
 
-    // Step 1: server route
+    // Step 1: server route (dev only)
     try {
       const serverSkills = await fetchLocalSkills();
       if (serverSkills.length > 0) {
         setSkills(serverSkills);
+        setActiveSources([]);
+        setStaleSources([]);
         setLoadState('ready');
         return;
       }
     } catch {
-      // 404 on Vercel — fall through to FS Access path.
+      // 404 on Vercel — fall through.
     }
 
-    // Step 2: stored handle (silent, no prompt)
+    // Step 2: authorized FS sources
     if (isFsAccessSupported()) {
-      try {
-        const fsResult = await loadSkillsFromStoredHandle();
-        if (fsResult && fsResult.skills.length > 0) {
-          setSkills(fsResult.skills);
-          setLoadState('ready');
-          return;
-        }
-        // Have a stored handle but permission lapsed — show re-auth gate.
-        const stored = await getStoredHandle();
-        if (stored) setNeedsReauth(true);
-      } catch {
-        // ignore — treat as needs-auth
+      const stored = await listAuthorizedSources();
+      if (stored.length > 0) {
+        const result = await loadSkillsFromAllSources(false);
+        setSkills(result.skills);
+        setActiveSources(stored.map((h) => h.name));
+        setStaleSources(result.staleSources);
+        setLoadState('ready');
+        return;
       }
     }
 
+    // Step 3: first-time gate
     setSkills([]);
+    setActiveSources([]);
+    setStaleSources([]);
     setLoadState(isFsAccessSupported() ? 'needs-auth' : 'unsupported');
   }, []);
 
@@ -216,42 +316,52 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
     loadAll();
   }, [loadAll]);
 
-  const handleAuthorize = useCallback(async () => {
+  const refreshFromCurrent = useCallback(async (promptForStale = false) => {
+    const stored = await listAuthorizedSources();
+    if (stored.length === 0) {
+      setSkills([]);
+      setActiveSources([]);
+      setStaleSources([]);
+      setLoadState('needs-auth');
+      return;
+    }
+    const result = await loadSkillsFromAllSources(promptForStale);
+    setSkills(result.skills);
+    setActiveSources(stored.map((h) => h.name));
+    setStaleSources(result.staleSources);
+    setLoadState('ready');
+  }, []);
+
+  const handleAddSource = useCallback(async () => {
     setAuthBusy(true);
     setAuthError(null);
     try {
-      let handle: FileSystemDirectoryHandle | null = null;
-      if (needsReauth) {
-        handle = await reauthorizeStoredHandle();
-        if (!handle) {
-          // user declined — clear and ask for fresh pick next time
-          await clearStoredHandle();
-        }
-      }
-      if (!handle) {
-        handle = await pickAndStoreSkillsDir();
-      }
-      const result = await discoverAndReadSkills(handle);
-      if (result.skills.length === 0) {
-        setAuthError(
-          '在所选目录里没找到 skill 文件。请重选一个包含 .claude/skills 或类似目录的父文件夹(比如你的 home 目录)。',
-        );
-        await clearStoredHandle();
-        return;
-      }
-      setSkills(result.skills);
-      setLoadState('ready');
-      setNeedsReauth(false);
+      await addAuthorizedSource();
+      await refreshFromCurrent(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // AbortError is the user closing the picker — don't show as error.
       if (!/abort/i.test(message)) {
         setAuthError(message);
       }
     } finally {
       setAuthBusy(false);
     }
-  }, [needsReauth]);
+  }, [refreshFromCurrent]);
+
+  const handleRemoveSource = useCallback(async (name: string) => {
+    await removeAuthorizedSource(name);
+    await refreshFromCurrent(false);
+  }, [refreshFromCurrent]);
+
+  const handleReauthSource = useCallback(async (name: string) => {
+    setAuthBusy(true);
+    try {
+      await reauthorizeSource(name);
+      await refreshFromCurrent(false);
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [refreshFromCurrent]);
 
   const filtered = useMemo(() => {
     let result = skills;
@@ -291,10 +401,10 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
   if (loadState === 'needs-auth' || loadState === 'unsupported') {
     return (
       <AuthorizeGate
-        reason={loadState === 'unsupported' ? 'unsupported' : (needsReauth ? 'no-permission' : 'server-empty')}
-        onAuthorize={handleAuthorize}
+        onAddSource={handleAddSource}
         busy={authBusy}
         errorMsg={authError}
+        unsupported={loadState === 'unsupported'}
       />
     );
   }
@@ -313,6 +423,17 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
             className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-muted/50 border border-input placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+
+        {activeSources.length > 0 && (
+          <SourceBar
+            sources={activeSources}
+            staleSources={staleSources}
+            onAdd={handleAddSource}
+            onRemove={handleRemoveSource}
+            onReauth={handleReauthSource}
+            busy={authBusy}
+          />
+        )}
 
         {/* Category chips */}
         <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
@@ -358,16 +479,18 @@ export function LocalSkillsTab({ onSelectSkill }: LocalSkillsTabProps) {
                 {activeCategory === 'all' ? 'All Local Skills' : activeCategory}
               </span>
               <span className="text-[10px] text-muted-foreground">({filtered.length})</span>
-              <button
-                onClick={async () => {
-                  await clearStoredHandle();
-                  loadAll();
-                }}
-                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1"
-                title="Re-pick the skills directory"
-              >
-                <FolderOpen className="size-3" /> 切换目录
-              </button>
+              {activeSources.length > 0 && (
+                <button
+                  onClick={async () => {
+                    await clearAllAuthorizedSources();
+                    loadAll();
+                  }}
+                  className="ml-auto text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+                  title="移除所有授权来源,重新开始"
+                >
+                  全部清除
+                </button>
+              )}
             </div>
             <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
               {filtered.map((skill) => (
