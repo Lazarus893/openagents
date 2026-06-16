@@ -12,6 +12,7 @@ GET  /v1/discover     Discover agents, channels, resources
 GET  /v1/profile      Network profile metadata
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -140,12 +141,27 @@ async def _emit_event(event: Event, workspace, db: Session, token: str = None):
     return result
 
 
+def _emit_event_blocking(event: Event, workspace, db: Session, token: str = None):
+    """Sync variant of _emit_event for `def` (threadpool) handlers.
+
+    The pipeline is async-shaped but everything inside it is synchronous
+    I/O — sync SQLAlchemy, the sync OpenAI/Anthropic router clients, sync
+    Redis publish — so when an async handler awaited it, all of that ran ON
+    the uvicorn event loop. A 2s pool-checkout wait or a multi-second LLM
+    routing call froze the whole worker (even /health and CORS preflights).
+    Running it under asyncio.run() inside a threadpool handler keeps those
+    waits in a thread. Safe because no mod touches the outer loop (no
+    create_task / get_running_loop / loop-bound clients).
+    """
+    return asyncio.run(_emit_event(event, workspace, db, token=token))
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/join
 # ---------------------------------------------------------------------------
 
 @router.post("/join")
-async def join_network(
+def join_network(
     body: JoinRequest,
     db: Session = Depends(get_db),
 ):
@@ -178,7 +194,7 @@ async def join_network(
         payload=payload,
     )
 
-    result = await _emit_event(event, workspace, db, token=body.token)
+    result = _emit_event_blocking(event, workspace, db, token=body.token)
     if result is None:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid network token")
 
@@ -196,7 +212,7 @@ async def join_network(
 # ---------------------------------------------------------------------------
 
 @router.post("/leave")
-async def leave_network(
+def leave_network(
     body: LeaveRequest,
     db: Session = Depends(get_db),
 ):
@@ -215,7 +231,7 @@ async def leave_network(
     )
 
     # Pass workspace token since leave doesn't carry one — already authenticated by knowing the network
-    result = await _emit_event(event, workspace, db, token=workspace.password_hash)
+    result = _emit_event_blocking(event, workspace, db, token=workspace.password_hash)
     if result is None:
         return json_response(ResponseCode.NOT_FOUND, "Agent not in network")
 
@@ -227,7 +243,7 @@ async def leave_network(
 # ---------------------------------------------------------------------------
 
 @router.post("/remove")
-async def remove_agent(
+def remove_agent(
     body: RemoveRequest,
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
@@ -250,7 +266,7 @@ async def remove_agent(
         },
     )
 
-    result = await _emit_event(event, workspace, db, token=workspace.password_hash)
+    result = _emit_event_blocking(event, workspace, db, token=workspace.password_hash)
     if result is None:
         return json_response(ResponseCode.NOT_FOUND, "Agent not in network")
 
@@ -265,7 +281,7 @@ async def remove_agent(
 # ---------------------------------------------------------------------------
 
 @router.post("/heartbeat")
-async def heartbeat(
+def heartbeat(
     body: HeartbeatRequest,
     db: Session = Depends(get_db),
 ):
@@ -284,7 +300,7 @@ async def heartbeat(
         },
     )
 
-    result = await _emit_event(event, workspace, db, token=workspace.password_hash)
+    result = _emit_event_blocking(event, workspace, db, token=workspace.password_hash)
     if result is None:
         return json_response(ResponseCode.NOT_FOUND, "Agent not in network")
 
@@ -304,7 +320,7 @@ async def heartbeat(
 # ---------------------------------------------------------------------------
 
 @router.post("/composing")
-async def composing_signal(
+def composing_signal(
     body: ComposingRequest,
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
@@ -328,7 +344,7 @@ async def composing_signal(
 # ---------------------------------------------------------------------------
 
 @router.post("/token/resolve")
-async def resolve_token(
+def resolve_token(
     body: TokenResolveRequest,
     db: Session = Depends(get_db),
 ):
@@ -355,7 +371,7 @@ async def resolve_token(
 # ---------------------------------------------------------------------------
 
 @router.get("/discover")
-async def discover(
+def discover(
     network: str = Query(..., description="Network (workspace) ID"),
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
@@ -433,7 +449,7 @@ async def discover(
 # ---------------------------------------------------------------------------
 
 @router.get("/profile")
-async def network_profile(
+def network_profile(
     network: str = Query(..., description="Network (workspace) ID"),
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
@@ -478,6 +494,7 @@ async def network_profile(
 # the source of truth is sdk/src/openagents/client/plugin_registry.py.
 
 _AGENT_CATALOG = [
+    # ── Featured agents (shown first, in order) ─────────────────────────
     {
         "name": "claude",
         "label": "Claude Code",
@@ -486,24 +503,8 @@ _AGENT_CATALOG = [
         "homepage": "https://claude.ai",
         "tags": ["coding", "anthropic", "cli"],
         "builtin": True,
-    },
-    {
-        "name": "codex",
-        "label": "OpenAI Codex CLI",
-        "description": "OpenAI's Codex CLI agent for the terminal",
-        "install_command": "npm install -g @openai/codex",
-        "homepage": "https://github.com/openai/codex",
-        "tags": ["coding", "openai", "cli"],
-        "builtin": True,
-    },
-    {
-        "name": "gemini",
-        "label": "Gemini CLI",
-        "description": "Google's open-source AI agent for the command line",
-        "install_command": "npm install -g @google/gemini-cli",
-        "homepage": "https://github.com/google-gemini/gemini-cli",
-        "tags": ["coding", "google", "open-source", "cli"],
-        "builtin": False,
+        "featured": True,
+        "order": 1,
     },
     {
         "name": "openclaw",
@@ -513,7 +514,77 @@ _AGENT_CATALOG = [
         "homepage": "https://github.com/qwibitai/openclaw",
         "tags": ["coding", "open-source", "cli"],
         "builtin": True,
+        "featured": True,
+        "order": 2,
     },
+    {
+        "name": "codex",
+        "label": "OpenAI Codex CLI",
+        "description": "OpenAI's Codex CLI agent for the terminal",
+        "install_command": "npm install -g @openai/codex",
+        "homepage": "https://github.com/openai/codex",
+        "tags": ["coding", "openai", "cli"],
+        "builtin": True,
+        "featured": True,
+        "order": 3,
+    },
+    {
+        "name": "cursor",
+        "label": "Cursor",
+        "description": "Cursor's AI coding agent for the terminal",
+        "install_command": "curl -fsSL https://cursor.com/install | bash",
+        "install_command_win": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm 'https://cursor.com/install?win32=true' | iex\"",
+        "homepage": "https://cursor.com",
+        "tags": ["coding", "cli", "cursor"],
+        "builtin": True,
+        "featured": True,
+        "order": 4,
+    },
+    {
+        "name": "opencode",
+        "label": "OpenCode",
+        "description": "Open-source terminal-native AI coding agent",
+        "install_command": "npm install -g opencode-ai@latest",
+        "homepage": "https://opencode.ai",
+        "tags": ["coding", "open-source", "cli", "terminal"],
+        "builtin": False,
+        "featured": True,
+        "order": 5,
+    },
+    {
+        "name": "hermes",
+        "label": "Hermes Agent",
+        "description": "Nous Research's self-improving AI agent with tools, profiles, memory, and messaging",
+        "install_command": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
+        "homepage": "https://github.com/NousResearch/hermes-agent",
+        "tags": ["coding", "open-source", "nous-research", "self-improving"],
+        "builtin": True,
+        "featured": True,
+        "order": 6,
+    },
+    {
+        "name": "kimi",
+        "label": "Kimi",
+        "description": "Kimi agent powered by Moonshot AI, OpenAI-compatible API",
+        "install_command": "npm install -g @anthropic-ai/kimi",
+        "homepage": "https://platform.moonshot.ai",
+        "tags": ["coding", "moonshot", "cli"],
+        "builtin": True,
+        "featured": True,
+        "order": 7,
+    },
+    {
+        "name": "gemini",
+        "label": "Gemini CLI",
+        "description": "Google's open-source AI agent for the command line",
+        "install_command": "npm install -g @google/gemini-cli",
+        "homepage": "https://github.com/google-gemini/gemini-cli",
+        "tags": ["coding", "google", "open-source", "cli"],
+        "builtin": False,
+        "featured": True,
+        "order": 8,
+    },
+    # ── Other agents ─────────────────────────────────────────────────────
     {
         "name": "amp",
         "label": "Amp (Sourcegraph)",
@@ -560,15 +631,6 @@ _AGENT_CATALOG = [
         "builtin": False,
     },
     {
-        "name": "opencode",
-        "label": "OpenCode",
-        "description": "Open-source terminal-native AI coding agent",
-        "install_command": "npm install -g opencode-ai@latest",
-        "homepage": "https://opencode.ai",
-        "tags": ["coding", "open-source", "cli", "terminal"],
-        "builtin": False,
-    },
-    {
         "name": "nanoclaw",
         "label": "NanoClaw",
         "description": "Lightweight containerized coding agent built on Claude Agent SDK",
@@ -581,6 +643,6 @@ _AGENT_CATALOG = [
 
 
 @router.get("/agent-catalog")
-async def agent_catalog():
+def agent_catalog():
     """Return the catalog of supported agent client types."""
     return success_response(_AGENT_CATALOG)

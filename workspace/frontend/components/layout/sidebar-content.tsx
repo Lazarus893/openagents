@@ -366,7 +366,22 @@ export function SidebarContent() {
 
         {/* Bottom section — pinned to bottom */}
         <div className="shrink-0 px-2.5 pb-1">
-          <NavButton active={viewMode === 'connect'} icon={<PlusSquare className="size-[15px]" />} label="Connect Agent" onClick={() => setViewMode('connect')} />
+          {recentAgents.length === 0 ? (
+            <button
+              onClick={() => setViewMode('connect')}
+              className={cn(
+                'w-full flex items-center justify-center gap-2 h-9 rounded-lg text-[13px] font-medium transition-colors',
+                viewMode === 'connect'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-primary/10 text-primary hover:bg-primary/20',
+              )}
+            >
+              <PlusSquare className="size-4" />
+              Connect Your First Agent
+            </button>
+          ) : (
+            <NavButton active={viewMode === 'connect'} icon={<PlusSquare className="size-[15px]" />} label="Connect Agent" onClick={() => setViewMode('connect')} />
+          )}
         </div>
         <div className="shrink-0 border-t border-border px-2.5 py-2.5 space-y-1">
           {/* Logged-in user details */}

@@ -279,7 +279,7 @@ async def _handle_ping(event: Event, ctx: PipelineContext) -> Optional[Event]:
 
 async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional[Event]:
     """network.channel.create → create Channel + initial ChannelMember rows."""
-    from app.models import Channel, ChannelMember
+    from app.models import Channel, ChannelMember, ChannelHumanMember, WorkspaceCollaborator
 
     db = ctx.extra["db"]
     workspace = ctx.extra["workspace"]
@@ -297,10 +297,45 @@ async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional
     db.add(channel)
     db.flush()  # get channel.id
 
-    # Add initial participants
+    # Add initial agent participants (filter out routing sentinels)
     participants = payload.get("participants", [])
     for agent_name in participants:
+        if agent_name == "__no_response__":
+            continue
         db.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
+
+    # Add initial human participants. Each email gets both a workspace
+    # collaborator row (so the mention picker shows them everywhere) and
+    # a channel_human_members row (so push fan-out for any message in
+    # this channel reaches their devices, not just @-mentions).
+    human_participants = payload.get("human_participants", []) or []
+    for email_raw in human_participants:
+        email = (email_raw or "").strip().lower()
+        if not email or "@" not in email:
+            continue
+        # Upsert collaborator — same trust model as _upsert_human_collaborator
+        existing_collab = db.execute(
+            select(WorkspaceCollaborator).where(
+                WorkspaceCollaborator.workspace_id == str(workspace.id),
+                WorkspaceCollaborator.email == email,
+            )
+        ).scalar_one_or_none()
+        if not existing_collab:
+            db.add(WorkspaceCollaborator(
+                workspace_id=str(workspace.id),
+                email=email,
+                role="editor",
+                added_by=event.source or email,
+            ))
+        # Upsert channel membership so chat-path pushes go to them.
+        existing_member = db.execute(
+            select(ChannelHumanMember).where(
+                ChannelHumanMember.channel_id == channel.id,
+                ChannelHumanMember.user_email == email,
+            )
+        ).scalar_one_or_none()
+        if not existing_member:
+            db.add(ChannelHumanMember(channel_id=channel.id, user_email=email))
 
     db.flush()
 
@@ -922,7 +957,11 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
         return event
 
     # ── Multi-agent channel: always use LLM router ──────────────────
-    if len(channel.participants or []) >= 2:
+    real_participants = [
+        p for p in (channel.participants or [])
+        if p.agent_name != "__no_response__"
+    ]
+    if len(real_participants) >= 2:
         from app.config import config
         if config.ROUTER_LLM_ENABLED and _get_router_api_key():
             targets = await _route_with_llm(channel, event, db, workspace)
@@ -957,6 +996,17 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
             not channel.name.startswith("routines:"):
         from app.models import ChannelMember
         existing = {p.agent_name for p in (channel.participants or [])}
+        # Clean up any __no_response__ sentinels that leaked into participants
+        if "__no_response__" in existing:
+            bogus = db.execute(
+                select(ChannelMember).where(
+                    ChannelMember.channel_id == channel.id,
+                    ChannelMember.agent_name == "__no_response__",
+                )
+            ).scalar_one_or_none()
+            if bogus:
+                db.delete(bogus)
+            existing.discard("__no_response__")
         for agent_name in event.metadata.get("target_agents", []):
             if agent_name == "__no_response__":
                 continue

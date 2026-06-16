@@ -159,6 +159,11 @@ class Channel(Base):
         Index("uq_channels_ws_name", "workspace_id", "name", unique=True),
         Index("idx_channels_project", "project_id"),
         Index("idx_channels_section", "section_id"),
+        # Serves /v1/discover's `WHERE workspace_id = ? AND status != 'deleted'`.
+        Index("idx_channels_workspace_status", "workspace_id", "status"),
+        # Serves the timer-loop auto-archive scan
+        # (`status = 'active' AND last_event_at < cutoff`).
+        Index("idx_channels_status_last_event", "status", "last_event_at"),
     )
 
 
